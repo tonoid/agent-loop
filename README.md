@@ -1,4 +1,4 @@
-# agent-loop
+# agent-loop: run coding agents on a schedule, across accounts, unattended
 
 Runs autonomous coding agents against your repositories on a schedule,
 unattended, across several provider accounts, without exhausting any of them
@@ -22,6 +22,11 @@ Built against **herdr 0.8.0, protocol 19**.
 **Who it's for**: anyone already running coding agents by hand who wants them
 to run overnight instead, across more than one provider account, without a
 human deciding which account and without waking up to an exhausted quota.
+
+**Keywords**: unattended Claude Code, autonomous coding agent scheduler, run
+Claude Code on cron, multiple Claude accounts, agent orchestration, git
+worktree per agent, GitHub issue to pull request automation, AI code review
+bot, quota-aware agent router, self-hosted agent runner, herdr.
 
 > ⚠️ **Disclaimer**: the code in this project was generated with
 > [Claude Code](https://claude.com/claude-code) (Anthropic), then **tested and
