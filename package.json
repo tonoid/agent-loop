@@ -1,6 +1,6 @@
 {
   "name": "@tonoid/agent-loop",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Schedules autonomous coding agents across provider accounts and runs them as herdr agents in herdr panes.",
   "license": "MIT",
   "author": "melalj <3869766+melalj@users.noreply.github.com>",
