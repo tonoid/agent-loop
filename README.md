@@ -15,6 +15,23 @@ below](#how-it-uses-herdr) is the fastest way to find that out.
 
 Built against **herdr 0.8.0, protocol 19**.
 
+[![npm](https://img.shields.io/npm/v/@tonoid/agent-loop?logo=npm)](https://www.npmjs.com/package/@tonoid/agent-loop)
+[![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![CI](https://github.com/tonoid/agent-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/tonoid/agent-loop/actions/workflows/ci.yml)
+
+**Who it's for**: anyone already running coding agents by hand who wants them
+to run overnight instead, across more than one provider account, without a
+human deciding which account and without waking up to an exhausted quota.
+
+> ⚠️ **Disclaimer**: the code in this project was generated with
+> [Claude Code](https://claude.com/claude-code) (Anthropic), then **tested and
+> reviewed manually** by a human. It is provided as is, without warranty.
+> Before pointing it at a repository you care about: read the Safety and
+> Limitations sections below in full, give it its own provider account, and run
+> it without `--live` first, which performs every read and refuses every write.
+> A loop you have never watched dry-run is a loop you do not know. Issues and
+> PRs welcome.
+
 ```
 $ agent-loop status
 
@@ -447,7 +464,7 @@ free. Land work with [conventional commits](https://www.conventionalcommits.org)
 so the release notes write themselves, and run `bun run typecheck && bun test`
 before opening the pull request.
 
-## Disclaimer
+## Safety
 
 This tool starts AI coding agents and lets them work unattended, so read this
 before pointing it at anything you care about.
