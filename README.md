@@ -15,60 +15,53 @@ below](#how-it-uses-herdr) is the fastest way to find that out.
 
 Built against **herdr 0.8.0, protocol 19**.
 
-## How it uses herdr
+```
+$ agent-loop status
 
-A tick decides what ought to be running. Everything it then does to a worker,
-it does through the `herdr` CLI:
+loop: session 1.0% resets in 275m, weekly_all 46.0% resets in 4235m, weekly_scoped 14.0% resets in 4235m
+loop: refresh token expires in 25d
+main: session 8.0% resets in 175m, weekly_all 95.0% resets in 4475m, weekly_scoped 29.0% resets in 4475m
+main: refresh token expires in 13d
+spawns today: 3
+acme: paused nothing
+```
 
-| What the loop needs | herdr call |
-|---|---|
-| the workspace a job's tabs belong in | `workspace list`, matched on the `herdrWorkspace` label |
-| a worker | `tab create --workspace <id> --cwd <worktree> --label <job>-<key> --env <VAR>=<account config dir> --no-focus` |
-| the pane that tab just opened | `pane list`, matched on cwd |
-| the agent itself | `agent start <name> --kind <provider> --pane <id> -- <account startArgs>` |
-| the brief delivered | `agent prompt <pane> <brief> --wait --until working` |
-| whether they are alive | `agent list` for the whole fleet, `agent get <pane>` for one |
-| why it is stuck | `agent read <pane> --source recent-unwrapped --lines <n>` |
-| a composer holding unsent text | `agent send-keys <pane> Enter` |
-| the worker gone | `tab close <tab>` |
-| you, when a worker is blocked | `notification show <title> --body <text>` |
-| a supported herdr | `api schema --json` for the protocol number |
+A tick is one pass over every workspace. This is the whole operator view, and
+what cron writes to the log every two minutes:
 
-Three consequences worth knowing before you read the code, because each one
-shaped it:
+```
+$ agent-loop tick --live
 
-**`agent_status` is the whole lifecycle.** A worker has no exit code and no pid
-here. `working`, `blocked` and `idle` are the only states the loop can observe,
-and every decision the monitor makes is built from one of those, the pane still
-being listed, and the worktree still being on disk. `blocked` notifies you once
-and then escalates on a timer; an agent that has vanished while its pane is
-still up is restarted exactly once, and one whose pane went with it has failed.
-A status herdr does not recognise becomes `missing`, which deliberately does
-nothing at all: holding cannot kill a live agent or tombstone an item, so a
-herdr that adds or renames a state stalls this loop rather than damaging
-anything with it.
+SPAWN build b412 on loop (session 13.0% of 90.0 with 156m left -> 1 workers, 0 in flight)
+BUSY digest 20260820-0610 (agent working)
+HOLD review r408 (blocked 12m < 180m)
+DONE digest 20260820-0610 (done() true)
+SWEEP build /home/u/projects/acme/wt-build-b397 (done(b397))
+IDLE review
+TICK acme 2949ms
+TICK total 2987ms
+```
 
-**`tab create` is the only verb that accepts `--env`.** That single flag is the
-entire channel by which the router's account choice reaches a worker, which is
-why the account is decided before the tab exists and can never be changed
-after. It is also why `configEnv` is an account-level setting: `CLAUDE_CONFIG_DIR`
-for Claude Code, `CODEX_HOME` for Codex.
+Without `--live` every one of those verbs reads `WOULD spawn`, `WOULD sweep`,
+and nothing is written: the gate in `src/adapters/run.ts` refuses any command
+outside the read allowlist.
 
-**herdr ids are not stable.** A pane id changes between rounds of the same
-logical worker, and a workspace id lasts until the herdr server restarts and
-then names somebody else's workspace. Nothing here caches one: the workspace is
-looked up by label and the pane by cwd, on every single spawn.
+## Install
 
-Six of those verbs are reads: `workspace list`, `pane list`, `agent list`,
-`agent get`, `agent read` and `api schema`. Every other one is a write. Without
-`--live` the gate in `src/adapters/run.ts` permits exactly those six and refuses
-the rest by name, so a dry tick can survey your entire fleet and is incapable of
-touching it.
+```
+npm i -g @tonoid/agent-loop
+agent-loop kinds     # prints the job kinds: enough to prove the install
+```
 
-`agent-loop check` compares your herdr's protocol number against the one this
-was tested on and warns when they differ. It never refuses to run on a
-mismatch: a newer herdr is usually fine, and a loop that stops dead at 2am
-because a dependency was upgraded is worse than one that says so and carries on.
+npm is the delivery mechanism, not the runtime. The package ships its
+TypeScript sources rather than a bundle, nothing is compiled at install time,
+and there are no runtime dependencies to fetch: the tarball is the `src/` tree,
+the `briefs/` the engine reads at spawn time, and the docs. The CLI's shebang is
+`#!/usr/bin/env bun`, so **bun has to be on the PATH of whoever runs it**. On a
+box without bun the install succeeds and the first run fails with
+`env: bun: No such file or directory`.
+
+To run a checkout as the real command instead, see [Development](#development).
 
 ## Prerequisites
 
@@ -89,33 +82,23 @@ because a dependency was upgraded is worse than one that says so and carries on.
   base is enough and each new worktree needs nothing. `agent-loop check`
   warns for any account missing it.
 
-Two things to know before running it. Workers start with permission prompts
-disabled, which is what makes them autonomous and also means they run
-unsandboxed as you. And all state lives under `~/.agent-loop/`, whatever else
-is on the box.
-
-## Install
+## Commands
 
 ```
-npm i -g @tonoid/agent-loop
-agent-loop kinds     # prints the job kinds: enough to prove the install
+agent-loop tick [--workspace <name>] [--live]   one pass over every workspace
+agent-loop check [<workspace folder>]           validate config and jobs
+agent-loop kinds [<kind>] [--json]              a kind's options, or its schema
+agent-loop status [--workspace <name>]          accounts, quota, paused jobs
+agent-loop pause|resume [<job>] --workspace <n> stop spawning; sweep and
+                                                monitor keep running
+agent-loop adopt <job> [<key>] --workspace <n>  record a spawned mark without
+                                                spawning: the cutover's import
+agent-loop adopt --list --workspace <n>         this workspace's marks
 ```
 
-npm is the delivery mechanism, not the runtime. The package ships its
-TypeScript sources rather than a bundle, nothing is compiled at install time,
-and there are no runtime dependencies to fetch: the tarball is the `src/` tree,
-the `briefs/` the engine reads at spawn time, and the docs. The CLI's shebang is
-`#!/usr/bin/env bun`, so **bun has to be on the PATH of whoever runs it**. On a
-box without bun the install succeeds and the first run fails with
-`env: bun: No such file or directory`.
-
-From a checkout instead, which is what you want if you are editing it:
-
-```
-bun install
-bun link          # puts agent-loop in ~/.bun/bin
-agent-loop kinds
-```
+`agent-loop check .` needs no `~/.agent-loop/config.yml`, so a service
+repository can run it in its own CI and catch a broken `job.yml` at the commit
+that broke it.
 
 ## Configure
 
@@ -289,6 +272,61 @@ interval against.
 Moving existing cron-driven pipelines onto this loop has an order that keeps
 every step reversible: `docs/cutover.md`.
 
+## How it uses herdr
+
+A tick decides what ought to be running. Everything it then does to a worker,
+it does through the `herdr` CLI:
+
+| What the loop needs | herdr call |
+|---|---|
+| the workspace a job's tabs belong in | `workspace list`, matched on the `herdrWorkspace` label |
+| a worker | `tab create --workspace <id> --cwd <worktree> --label <job>-<key> --env <VAR>=<account config dir> --no-focus` |
+| the pane that tab just opened | `pane list`, matched on cwd |
+| the agent itself | `agent start <name> --kind <provider> --pane <id> -- <account startArgs>` |
+| the brief delivered | `agent prompt <pane> <brief> --wait --until working` |
+| whether they are alive | `agent list` for the whole fleet, `agent get <pane>` for one |
+| why it is stuck | `agent read <pane> --source recent-unwrapped --lines <n>` |
+| a composer holding unsent text | `agent send-keys <pane> Enter` |
+| the worker gone | `tab close <tab>` |
+| you, when a worker is blocked | `notification show <title> --body <text>` |
+| a supported herdr | `api schema --json` for the protocol number |
+
+Three consequences worth knowing before you read the code, because each one
+shaped it:
+
+**`agent_status` is the whole lifecycle.** A worker has no exit code and no pid
+here. `working`, `blocked` and `idle` are the only states the loop can observe,
+and every decision the monitor makes is built from one of those, the pane still
+being listed, and the worktree still being on disk. `blocked` notifies you once
+and then escalates on a timer; an agent that has vanished while its pane is
+still up is restarted exactly once, and one whose pane went with it has failed.
+A status herdr does not recognise becomes `missing`, which deliberately does
+nothing at all: holding cannot kill a live agent or tombstone an item, so a
+herdr that adds or renames a state stalls this loop rather than damaging
+anything with it.
+
+**`tab create` is the only verb that accepts `--env`.** That single flag is the
+entire channel by which the router's account choice reaches a worker, which is
+why the account is decided before the tab exists and can never be changed
+after. It is also why `configEnv` is an account-level setting: `CLAUDE_CONFIG_DIR`
+for Claude Code, `CODEX_HOME` for Codex.
+
+**herdr ids are not stable.** A pane id changes between rounds of the same
+logical worker, and a workspace id lasts until the herdr server restarts and
+then names somebody else's workspace. Nothing here caches one: the workspace is
+looked up by label and the pane by cwd, on every single spawn.
+
+Six of those verbs are reads: `workspace list`, `pane list`, `agent list`,
+`agent get`, `agent read` and `api schema`. Every other one is a write. Without
+`--live` the gate in `src/adapters/run.ts` permits exactly those six and refuses
+the rest by name, so a dry tick can survey your entire fleet and is incapable of
+touching it.
+
+`agent-loop check` compares your herdr's protocol number against the one this
+was tested on and warns when they differ. It never refuses to run on a
+mismatch: a newer herdr is usually fine, and a loop that stops dead at 2am
+because a dependency was upgraded is worse than one that says so and carries on.
+
 ## Workers
 
 A worker starts in the account's own config directory, so it inherits whatever
@@ -315,23 +353,23 @@ answer, the loop sends a `herdr` notification, once per item rather than once
 per tick, and only under `--live`. It is the only thing the loop will interrupt
 you for, which is what makes it worth reading.
 
-## Commands
+## Limitations
 
-```
-agent-loop tick [--workspace <name>] [--live]   one pass over every workspace
-agent-loop check [<workspace folder>]           validate config and jobs
-agent-loop kinds [<kind>] [--json]              a kind's options, or its schema
-agent-loop status [--workspace <name>]          accounts, quota, paused jobs
-agent-loop pause|resume [<job>] --workspace <n> stop spawning; sweep and
-                                                monitor keep running
-agent-loop adopt <job> [<key>] --workspace <n>  record a spawned mark without
-                                                spawning: the cutover's import
-agent-loop adopt --list --workspace <n>         this workspace's marks
-```
-
-`agent-loop check .` needs no `~/.agent-loop/config.yml`, so a service
-repository can run it in its own CI and catch a broken `job.yml` at the commit
-that broke it.
+- GitHub only. Labels are the state machine and every read goes through `gh`,
+  so there is no GitLab, Gitea or Forgejo support and adding one is not a small
+  change.
+- Workers run unsandboxed as you, with permission prompts disabled. That is
+  what makes them autonomous. Give the loop its own account and its own
+  worktree base, and read `briefs/default/core.md`, which is the contract every
+  worker works under.
+- One box. State lives in `~/.agent-loop/`, the daily spawn cap and the
+  in-flight count are per machine, and two machines sharing one provider
+  account do not know about each other.
+- The `grok` provider is wired but unverified: set `configEnv` on the account
+  before routing real work to it. `claude` and `codex` are the tested ones.
+- The herdr protocol is pinned to one tested number. A newer herdr warns and
+  runs; a herdr that renames `agent_status` stalls the monitor rather than
+  breaking it.
 
 ## Reading the source
 
@@ -341,38 +379,62 @@ in the repository. The numbers are stable and nothing in the code needs it: the
 README and `agent-loop kinds` are the current reference, and every rule the
 spec states is enforced by a test that names it.
 
-## Maintenance
+## Development
 
 ```
-bun test            # the whole suite: no network, no gh, no herdr
-bun run typecheck
-bun run test:live   # opts in to a real herdr, which has to be running
+git clone https://github.com/tonoid/agent-loop
+cd agent-loop
+bun install
+bun test
 ```
 
-The suite is hermetic apart from `test:live`, which is skipped unless
-`AGENT_LOOP_LIVE_HERDR=1`. CI runs the typecheck and the suite on every push and
-pull request.
+The suite is hermetic: no network, no `gh`, no herdr, no writes outside a
+temporary directory. `bun run test:live` opts in to a real herdr and is skipped
+unless `AGENT_LOOP_LIVE_HERDR=1`. CI runs `bun run typecheck` and `bun test` on
+every push and pull request.
 
-Releases are driven by the commit messages. Conventional commits landing on
-`main` are read by [release-please](https://github.com/googleapis/release-please),
-which keeps a pull request open carrying the next version and the changelog
-entry. Merging it tags the commit, cuts the GitHub release, and publishes to
-npm with provenance. Nothing else is manual, and the only secret involved is
-`NPM_TOKEN` in the repository's Actions secrets. So `feat:` and `fix:` prefixes
-are load-bearing: a commit without one ships no release and appears in no
-changelog.
+To run the checkout as the real command, so `git pull` updates the loop:
 
-Publishing works despite this being a bun project because bun is never involved
-in it. `npm publish` uploads the sources as they are, and the tests that run
-before it are the only step that needs bun. What the version number promises is
-therefore the source in `src/`, not a build of it.
+```
+bun link          # puts agent-loop in ~/.bun/bin
+```
+
+That is worth knowing before you edit anything: with the checkout linked, cron
+runs your working tree, so an unfinished edit is live within one tick.
+
+## Releasing
+
+Versions come from the commit messages, so land work on `main` with
+[conventional commits](https://www.conventionalcommits.org):
+
+| Prefix | Effect |
+|---|---|
+| `fix: ...` | patch, 1.0.0 to 1.0.1 |
+| `feat: ...` | minor, 1.0.0 to 1.1.0 |
+| `feat!: ...` or a `BREAKING CHANGE:` footer | major, 1.0.0 to 2.0.0 |
+| `docs:`, `chore:`, `test:`, `refactor:` | no release |
+
+The `release` workflow runs release-please on every push to `main`. It keeps a
+single release PR open ("chore(main): release X.Y.Z") holding the version bump
+and the new `CHANGELOG.md` section. Nothing publishes while that PR sits there.
+Merging it tags `vX.Y.Z`, cuts the GitHub release, and triggers the publish job,
+which runs the typecheck and the suite and then `npm publish` with the
+`NPM_TOKEN` repository secret.
+
+`.release-please-manifest.json` is the source of truth for what ships next, so
+let release-please edit it rather than bumping `package.json` by hand.
+
+Published releases carry npm [provenance](https://docs.npmjs.com/generating-provenance-statements),
+which links the tarball to the workflow run that built it. That needs the
+`id-token: write` permission the publish job already declares, and a **public
+repository**: the registry rejects a provenance bundle built from a private one,
+and it does so after the tag and the GitHub release already exist.
 
 When herdr changes its protocol, bump `TESTED_PROTOCOL` in
 `src/adapters/herdr.ts` and the version named at the top of this file. A
-mismatch is a warning from `agent-loop check` and never a refusal to run, so
-this is bookkeeping rather than a gate: the reason to keep it current is that
-the warning is worthless once it is always on.
+mismatch is a warning from `agent-loop check`, never a refusal to run, so this
+is bookkeeping: the point is that a warning which is always on is worth nothing.
 
 ## License
 
-MIT.
+MIT
