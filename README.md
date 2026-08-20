@@ -435,6 +435,58 @@ When herdr changes its protocol, bump `TESTED_PROTOCOL` in
 mismatch is a warning from `agent-loop check`, never a refusal to run, so this
 is bookkeeping: the point is that a warning which is always on is worth nothing.
 
+## Contributing
+
+Issues and pull requests are welcome:
+[github.com/tonoid/agent-loop/issues](https://github.com/tonoid/agent-loop/issues).
+
+A new job kind is the most useful thing you can add. Kinds are a closed
+registry rather than a plugin system (`src/kinds/`): implement `check`, `build`
+and `validateOptions`, register it, and `agent-loop kinds` documents it for
+free. Land work with [conventional commits](https://www.conventionalcommits.org)
+so the release notes write themselves, and run `bun run typecheck && bun test`
+before opening the pull request.
+
+## Disclaimer
+
+This tool starts AI coding agents and lets them work unattended, so read this
+before pointing it at anything you care about.
+
+Workers run with permission prompts disabled, as your user, with no sandbox.
+They create branches, push them, open pull requests, apply labels, leave
+comments, and depending on the job's `mergeMode` they merge. Nobody approves
+any of that at the time it happens: that is the entire point of the loop, and
+it is also the risk. Everything they produce is machine-generated and has had
+no human review unless you review it.
+
+They also spend real quota on real accounts. The router holds back whatever
+`reserve` you configure and stops at `maxSpawnsPerDay`, but a misconfigured
+loop can still burn a week's allowance in an afternoon.
+
+Give it its own provider account and its own worktree base, keep it away from
+repositories where an unreviewed merge would matter, and treat the pull
+requests it opens as drafts from a fast, tireless colleague who is sometimes
+confidently wrong. The MIT warranty disclaimer is not a formality here.
+
+Not affiliated with Anthropic, OpenAI, xAI or GitHub. Claude, Claude Code,
+Codex and Grok are trademarks of their respective owners.
+
+## Credits
+
+**Created and maintained by [tonoid](https://www.tonoid.com)** - A microstartup
+studio building services like [2sync.com](https://2sync.com) or
+[refurb.me](https://www.refurb.me).
+
+| | |
+|---|---|
+| 💼 All tonoïd projects | [tonoid.com/projects](https://www.tonoid.com/projects) |
+| 📬 Contact | hello@tonoid.com |
+| 🐙 GitHub | [github.com/tonoid](https://github.com/tonoid) |
+
 ## License
 
-MIT
+[MIT](./LICENSE) © [tonoid.com](https://tonoid.com).
+
+---
+
+**GitHub topics**: `claude-code` `codex` `ai-agents` `autonomous-agents` `agent-orchestration` `herdr` `cron` `scheduler` `git-worktree` `github-automation` `devops` `typescript` `bun` `self-hosted`
