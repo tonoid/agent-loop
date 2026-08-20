@@ -1,0 +1,23 @@
+# Both checks the README asks of a contributor, on the runtime the loop
+# actually runs on. There is nothing to build and nothing to publish: the CLI
+# is the TypeScript in src/, run by bun.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      # The live herdr integration test opts in through its own env var, so
+      # the suite is hermetic here: no herdr, no gh, no network.
+      - run: bun test

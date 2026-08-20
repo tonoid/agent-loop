@@ -1,0 +1,46 @@
+{
+  "name": "@tonoid/agent-loop",
+  "version": "0.0.0",
+  "description": "Schedules autonomous coding agents across provider accounts and runs them as herdr agents in herdr panes.",
+  "license": "MIT",
+  "author": "melalj <3869766+melalj@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonoid/agent-loop.git"
+  },
+  "homepage": "https://github.com/tonoid/agent-loop#readme",
+  "bugs": {
+    "url": "https://github.com/tonoid/agent-loop/issues"
+  },
+  "keywords": [
+    "herdr",
+    "agent",
+    "claude-code",
+    "codex",
+    "cron",
+    "scheduler",
+    "git-worktree",
+    "automation"
+  ],
+  "type": "module",
+  "bin": {
+    "agent-loop": "./src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "test:live": "AGENT_LOOP_LIVE_HERDR=1 bun test test/integration/herdr-live.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "files": [
+    "src",
+    "briefs",
+    "docs/cutover.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
