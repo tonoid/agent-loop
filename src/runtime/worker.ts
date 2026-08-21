@@ -20,20 +20,43 @@ export interface WorkerSpec {
   brief: string
 }
 
+// An agent that comes up on a startup dialog is running, not broken: it is
+// waiting on a keypress, and every worktree is a directory the agent has never
+// seen, so the folder-trust and external-CLAUDE.md-import questions are the
+// normal case rather than the exception. Enter takes the highlighted default,
+// which is the permissive answer to both, and that is the answer these workers
+// have always given: until herdr started failing the start on a blocked agent,
+// the recovery Enter in sendBrief was answering them by accident. Stacked
+// dialogs get one Enter per start attempt, which is what the retry loop is for.
+async function answerStartupDialog(ctx: Ctx, pane: string): Promise<boolean> {
+  if ((await ctx.herdr.agentStatus(pane)) !== "blocked") return false
+  await ctx.herdr.agentSendKeys(pane, ["Enter"])
+  await ctx.sleep(RECOVER_WAIT_MS)
+  return (await ctx.herdr.agentStatus(pane)) !== "blocked"
+}
+
 export async function startWorker(ctx: Ctx, w: WorkerSpec): Promise<void> {
-  let lastErr: unknown = null
+  // The first error, not the last: once an attempt has registered the name,
+  // every retry after it fails with agent_name_taken, and reporting that hides
+  // the only error that says why the start failed in the first place.
+  let firstErr: unknown = null
+  let started = false
   for (let attempt = 1; attempt <= START_RETRIES; attempt++) {
     try {
       await ctx.herdr.agentStart({ pane: w.pane, kind: w.kind, name: w.name, args: w.args })
-      lastErr = null
+      started = true
       break
     } catch (err) {
-      lastErr = err
+      if (firstErr === null) firstErr = err
+      if (await answerStartupDialog(ctx, w.pane)) {
+        started = true
+        break
+      }
       if (attempt < START_RETRIES) await ctx.sleep(START_DELAY_MS)
     }
   }
-  if (lastErr) {
-    throw new Error(`agent start failed after ${START_RETRIES} attempts: ${lastErr}`)
+  if (!started) {
+    throw new Error(`agent start failed after ${START_RETRIES} attempts: ${firstErr}`)
   }
   await sendBrief(ctx, w.pane, w.brief)
 }

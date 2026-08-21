@@ -4,6 +4,7 @@ import type { AgentStatus, Ctx } from "../src/types"
 
 function ctxWith(o: {
   startFails?: number
+  startErrors?: string[]
   statuses?: AgentStatus[]
   promptThrows?: boolean
 } = {}) {
@@ -17,7 +18,10 @@ function ctxWith(o: {
     herdr: {
       async agentStart() {
         calls.push("start")
-        if (++starts <= (o.startFails ?? 0)) throw new Error("pane not ready")
+        if (++starts <= (o.startFails ?? 0)) {
+          const errs = o.startErrors ?? ["pane not ready"]
+          throw new Error(errs[Math.min(starts - 1, errs.length - 1)]!)
+        }
       },
       async agentPrompt() {
         calls.push("prompt")
@@ -52,6 +56,28 @@ test("a pane that never comes up fails after the last attempt, not before", asyn
   const { ctx, calls } = ctxWith({ startFails: START_RETRIES })
   await expect(startWorker(ctx, spec)).rejects.toThrow(/after 5 attempts/)
   expect(calls.filter((c) => c === "start")).toHaveLength(START_RETRIES)
+})
+
+// herdr fails the start when the agent comes up on a folder-trust or external
+// -import dialog. The agent is running and one Enter takes the default, so the
+// start is finished, not retried: retrying it can only collide with the name
+// the failed attempt already registered.
+test("an agent blocked on a startup dialog is answered, not retried", async () => {
+  const { ctx, calls } = ctxWith({ startFails: 1, statuses: ["blocked", "idle", "working"] })
+  await startWorker(ctx, spec)
+  expect(calls).toEqual(["start", "status", "enter", "status", "prompt", "status"])
+})
+
+test("a dialog that Enter does not clear falls back to the retry loop", async () => {
+  const { ctx, calls } = ctxWith({ startFails: START_RETRIES, statuses: ["blocked"] })
+  await expect(startWorker(ctx, spec)).rejects.toThrow(/after 5 attempts/)
+  expect(calls.filter((c) => c === "start")).toHaveLength(START_RETRIES)
+  expect(calls.filter((c) => c === "enter")).toHaveLength(START_RETRIES)
+})
+
+test("the reported start error is the first one, not the collision it caused", async () => {
+  const { ctx } = ctxWith({ startFails: START_RETRIES, startErrors: ["pane not ready", "agent_name_taken"] })
+  await expect(startWorker(ctx, spec)).rejects.toThrow(/pane not ready/)
 })
 
 test("a stuck composer gets one Enter and is then confirmed", async () => {
