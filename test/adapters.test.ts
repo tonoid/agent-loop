@@ -62,7 +62,7 @@ test("herdr agents map status and treat an unknown status as missing", async () 
         { cwd: "/w/wt-build-b80", agent_status: "unknown", pane_id: "w30:p1" },
       ],
     },
-  }))
+  }), async () => "")
   expect(await herdr.agents()).toEqual([
     { cwd: "/w/wt-review-r80", status: "working", paneId: "w3X:p1" },
     { cwd: "/w/wt-build-b80", status: "missing", paneId: "w30:p1" },

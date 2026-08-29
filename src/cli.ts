@@ -93,9 +93,9 @@ if (cmd === "check") {
     deps: {
       which: (b) => Bun.which(b),
       ghAuth: async () => makeRunners(false).runText(["gh", "auth", "status"]).then(() => true, () => false),
-      protocol: () => makeHerdr(makeRunners(false).runJson).protocol(),
+      protocol: () => makeHerdr(makeRunners(false).runJson, makeRunners(false).runText).protocol(),
       herdrWorkspaces: async () =>
-        (await makeHerdr(makeRunners(false).runJson).workspaces()).map((w) => w.label),
+        (await makeHerdr(makeRunners(false).runJson, makeRunners(false).runText).workspaces()).map((w) => w.label),
       readConfig: async (p) => (await Bun.file(p).exists()) ? Bun.file(p).text() : null,
     },
   })
@@ -187,7 +187,7 @@ const ctxFor = (ws: WorkspaceConfig, marks: ReturnType<typeof openState>) =>
     lock: fileLock(),
     gh: makeGh(rj, rt),
     gitFor: (repo) => makeGit(rt, repo),
-    herdr: makeHerdr(rj),
+    herdr: makeHerdr(rj, rt),
     marks,
     global,
     usageFor: (a, at) => readers[a.provider](a, at),
@@ -264,7 +264,7 @@ async function memAvailableMb(): Promise<number> {
   }
 }
 
-const protocol = await makeHerdr(rj).protocol().catch(() => -1)
+const protocol = await makeHerdr(rj, rt).protocol().catch(() => -1)
 if (protocol !== TESTED_PROTOCOL) {
   console.log(`${stamp()} WARN herdr protocol ${protocol}, tested ${TESTED_PROTOCOL}`)
 }

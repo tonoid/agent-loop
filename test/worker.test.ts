@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { startWorker, sendBrief, START_RETRIES, PROMPT_ATTEMPTS } from "../src/runtime/worker"
+import { startWorker, sendBrief, dialogKeys, START_RETRIES, PROMPT_ATTEMPTS } from "../src/runtime/worker"
 import type { AgentStatus, Ctx } from "../src/types"
 
 function ctxWith(o: {
@@ -7,9 +7,12 @@ function ctxWith(o: {
   startErrors?: string[]
   statuses?: AgentStatus[]
   promptThrows?: boolean
+  screen?: string
+  statusThrowsFrom?: number
 } = {}) {
   const calls: string[] = []
   const slept: number[] = []
+  const keys: string[][] = []
   let starts = 0
   const statuses = o.statuses ?? ["working"]
   let read = 0
@@ -27,15 +30,37 @@ function ctxWith(o: {
         calls.push("prompt")
         if (o.promptThrows) throw new Error("timed out waiting for working")
       },
-      async agentSendKeys() { calls.push("enter") },
+      async agentRead() {
+        calls.push("read")
+        return o.screen ?? ""
+      },
+      async agentSendKeys(_t: string, k: string[]) {
+        calls.push("enter")
+        keys.push(k)
+      },
       async agentStatus(): Promise<AgentStatus> {
         calls.push("status")
-        return statuses[Math.min(read++, statuses.length - 1)]!
+        const n = ++read
+        if (o.statusThrowsFrom !== undefined && n >= o.statusThrowsFrom) {
+          throw new Error("herdr exited 1: agent_not_found")
+        }
+        return statuses[Math.min(n - 1, statuses.length - 1)]!
       },
     },
   } as unknown as Ctx
-  return { ctx, calls, slept }
+  return { ctx, calls, slept, keys }
 }
+
+// Verbatim from a worker that came up on the folder-trust question, which lists
+// the refusing answer first and highlights it.
+const TRUST_SCREEN = [
+  " Quick safety check: Is this a project you created or one you trust?",
+  "",
+  " \u276f No, exit",
+  "   Yes, I trust this folder",
+  "",
+  " Enter to confirm \u00b7 Esc to cancel",
+].join("\n")
 
 const spec = { pane: "w6:t2:p1", kind: "claude", name: "build-b7", args: [], brief: "go" }
 
@@ -59,20 +84,55 @@ test("a pane that never comes up fails after the last attempt, not before", asyn
 })
 
 // herdr fails the start when the agent comes up on a folder-trust or external
-// -import dialog. The agent is running and one Enter takes the default, so the
+// -import dialog. The agent is running and the dialog can be answered, so the
 // start is finished, not retried: retrying it can only collide with the name
 // the failed attempt already registered.
 test("an agent blocked on a startup dialog is answered, not retried", async () => {
   const { ctx, calls } = ctxWith({ startFails: 1, statuses: ["blocked", "idle", "working"] })
   await startWorker(ctx, spec)
-  expect(calls).toEqual(["start", "status", "enter", "status", "prompt", "status"])
+  expect(calls).toEqual(["start", "status", "read", "enter", "status", "prompt", "status"])
 })
 
-test("a dialog that Enter does not clear falls back to the retry loop", async () => {
+test("a dialog that the answer does not clear falls back to the retry loop", async () => {
   const { ctx, calls } = ctxWith({ startFails: START_RETRIES, statuses: ["blocked"] })
   await expect(startWorker(ctx, spec)).rejects.toThrow(/after 5 attempts/)
   expect(calls.filter((c) => c === "start")).toHaveLength(START_RETRIES)
   expect(calls.filter((c) => c === "enter")).toHaveLength(START_RETRIES)
+})
+
+// The folder-trust dialog highlights "No, exit". Enter there quits the agent
+// rather than answering it, and herdr then has nothing left at the pane.
+test("the trusting answer is selected before Enter, not the highlighted refusal", async () => {
+  const { ctx, keys } = ctxWith({
+    startFails: 1,
+    statuses: ["blocked", "idle", "working"],
+    screen: TRUST_SCREEN,
+  })
+  await startWorker(ctx, spec)
+  expect(keys).toEqual([["Down", "Enter"]])
+})
+
+// An answer that quits the agent leaves herdr with nothing at the pane, and the
+// status read that follows fails. That read must not become the reported error:
+// it hides the start failure and eats the attempts that would have recovered.
+test("a failed status read neither masks the start error nor ends the retries", async () => {
+  const { ctx, calls } = ctxWith({
+    startFails: START_RETRIES,
+    startErrors: ["pane not ready"],
+    statusThrowsFrom: 1,
+  })
+  await expect(startWorker(ctx, spec)).rejects.toThrow(/pane not ready/)
+  expect(calls.filter((c) => c === "start")).toHaveLength(START_RETRIES)
+})
+
+test("a screen with no yes-or-no options is still answered with a bare Enter", () => {
+  expect(dialogKeys("some banner with no question on it")).toEqual(["Enter"])
+})
+
+test("the permissive answer is walked to whichever side of the cursor it is on", () => {
+  expect(dialogKeys(TRUST_SCREEN)).toEqual(["Down", "Enter"])
+  expect(dialogKeys(" \u276f Yes, allow external imports\n   No, disable external imports")).toEqual(["Enter"])
+  expect(dialogKeys("   Yes, I trust this folder\n \u276f No, exit")).toEqual(["Up", "Enter"])
 })
 
 test("the reported start error is the first one, not the collision it caused", async () => {

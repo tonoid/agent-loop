@@ -20,17 +20,37 @@ export interface WorkerSpec {
   brief: string
 }
 
+// Enough of the screen to carry a dialog's options and the cursor on one of them.
+export const DIALOG_LINES = 40
+
+// Both startup dialogs list their refusing answer first and highlight it, so a
+// bare Enter answers neither: on the folder-trust one it picks "No, exit", the
+// agent quits, herdr deregisters it, and every later read of that pane fails
+// with agent_not_found. Read which option the cursor is on instead and walk it
+// to the one that starts with "Yes", which is the answer these workers have
+// always meant to give. A screen with no such options keeps the old bare Enter,
+// because a dialog nobody has seen yet is still more likely to want confirming
+// than cancelling.
+export function dialogKeys(screen: string): string[] {
+  const options = screen
+    .split("\n")
+    .map((l) => ({ selected: /^\s*[\u276f>]/.test(l), text: l.replace(/^\s*[\u276f>]?\s*/, "") }))
+    .filter((o) => /^(Yes|No),/.test(o.text))
+  const at = options.findIndex((o) => o.selected)
+  const yes = options.findIndex((o) => o.text.startsWith("Yes"))
+  if (at < 0 || yes < 0) return ["Enter"]
+  const step = yes > at ? "Down" : "Up"
+  return [...Array(Math.abs(yes - at)).fill(step), "Enter"]
+}
+
 // An agent that comes up on a startup dialog is running, not broken: it is
 // waiting on a keypress, and every worktree is a directory the agent has never
 // seen, so the folder-trust and external-CLAUDE.md-import questions are the
-// normal case rather than the exception. Enter takes the highlighted default,
-// which is the permissive answer to both, and that is the answer these workers
-// have always given: until herdr started failing the start on a blocked agent,
-// the recovery Enter in sendBrief was answering them by accident. Stacked
-// dialogs get one Enter per start attempt, which is what the retry loop is for.
+// normal case rather than the exception. Stacked dialogs get one answer per
+// start attempt, which is what the retry loop is for.
 async function answerStartupDialog(ctx: Ctx, pane: string): Promise<boolean> {
   if ((await ctx.herdr.agentStatus(pane)) !== "blocked") return false
-  await ctx.herdr.agentSendKeys(pane, ["Enter"])
+  await ctx.herdr.agentSendKeys(pane, dialogKeys(await ctx.herdr.agentRead(pane, DIALOG_LINES)))
   await ctx.sleep(RECOVER_WAIT_MS)
   return (await ctx.herdr.agentStatus(pane)) !== "blocked"
 }
@@ -48,7 +68,11 @@ export async function startWorker(ctx: Ctx, w: WorkerSpec): Promise<void> {
       break
     } catch (err) {
       if (firstErr === null) firstErr = err
-      if (await answerStartupDialog(ctx, w.pane)) {
+      // Answering can fail in its own right: a dialog answered with the wrong
+      // key quits the agent, and the reads here then throw agent_not_found.
+      // Letting that escape replaces the start error with a symptom of the
+      // recovery and skips every attempt that was left.
+      if (await answerStartupDialog(ctx, w.pane).catch(() => false)) {
         started = true
         break
       }

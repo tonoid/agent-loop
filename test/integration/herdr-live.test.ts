@@ -13,8 +13,8 @@ const KIND = process.env.AGENT_LOOP_LIVE_KIND ?? "claude"
 // Skipped unless explicitly asked for: this is the only test that touches a
 // real herdr, and it starts a real agent.
 test.skipIf(!LIVE)("a brief actually lands in a real agent's composer", async () => {
-  const { runJson } = makeRunners(true)
-  const herdr = makeHerdr(runJson)
+  const { runJson, runText } = makeRunners(true)
+  const herdr = makeHerdr(runJson, runText)
   const ctx = { herdr, sleep: (ms: number) => Bun.sleep(ms) } as unknown as Ctx
 
   const ws = (await herdr.workspaces()).find((w) => w.label === WORKSPACE)

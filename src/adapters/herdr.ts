@@ -45,7 +45,10 @@ function toStatus(s: unknown): AgentStatus {
   return KNOWN.includes(s as AgentStatus) ? (s as AgentStatus) : "missing"
 }
 
-export function makeHerdr(run: Runner): Herdr {
+// agent read answers with the terminal text itself rather than a JSON envelope,
+// so it takes the text runner: putting it through the JSON one turns every read
+// into a parse error, and the failure tail a monitor reports into "no transcript".
+export function makeHerdr(run: Runner, runText: (argv: string[]) => Promise<string>): Herdr {
   return {
     async agents() {
       const r = await run(["herdr", "agent", "list"])
@@ -105,10 +108,9 @@ export function makeHerdr(run: Runner): Herdr {
       await run(["herdr", "agent", "send-keys", target, ...keys])
     },
     async agentRead(target, lines) {
-      const r = await run([
+      return runText([
         "herdr", "agent", "read", target, "--source", "recent-unwrapped", "--lines", String(lines),
       ])
-      return String(r?.result?.output ?? "")
     },
     async agentStatus(target) {
       const r = await run(["herdr", "agent", "get", target])
