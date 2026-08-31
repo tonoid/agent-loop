@@ -66,6 +66,8 @@ export interface Config {
   releaseBefore: number
   maxSpawnsPerDay: number
   blockedTimeoutMin: number
+  // A hold this old has one notification sent about it. 0 turns it off.
+  holdTimeoutMin: number
   // Percentage points per minute per worker, used for a provider/window pair
   // with no measured EWMA yet. Must be > 0.
   workerRateSeed: number
@@ -187,7 +189,7 @@ export interface Job {
 
 export type Decision =
   | { pass: "gc"; removed: number }
-  | { pass: "sweep"; job: string; worktree: string; branch: string; action: "clean" | "hold"; reason: string }
+  | { pass: "sweep"; job: string; worktree: string; branch: string; action: "clean" | "hold" | "overdue"; reason: string }
   | { pass: "monitor"; job: string; key: string; action: MonitorAction; reason: string }
   | { pass: "spawn"; job: string; key: string; action: "spawn" | "skip"; account?: string; reason: string }
   // The workspace this tick pass covered, or "total" for the whole process:
@@ -204,7 +206,7 @@ export type Decision =
 
 export type MonitorAction =
   | "done" | "external" | "busy" | "blocked" | "escalate"
-  | "restart" | "nudge" | "fail" | "hold"
+  | "restart" | "nudge" | "fail" | "hold" | "overdue"
 
 export interface Window {
   kind: string          // 'session' | 'weekly_all' | 'w300' | ...

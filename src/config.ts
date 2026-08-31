@@ -12,7 +12,7 @@ const KNOWN_PROVIDERS: Provider[] = ["claude", "codex", "grok"]
 // this at the commit that broke it (spec 3.5).
 const CONFIG_KEYS = [
   "accounts", "workspaces", "maxConcurrentPerAccount", "minFreeMb", "usageMax",
-  "releaseBefore", "maxSpawnsPerDay", "blockedTimeoutMin", "workerRateSeed",
+  "releaseBefore", "maxSpawnsPerDay", "blockedTimeoutMin", "holdTimeoutMin", "workerRateSeed",
 ]
 const ACCOUNT_KEYS = [
   "id", "provider", "configDir", "reserve", "reservePerWeekday", "weekendWeight", "soleConsumer", "maxConcurrent", "allowWhenUnreadable",
@@ -28,6 +28,10 @@ export const DEFAULTS = {
   releaseBefore: 120,
   maxSpawnsPerDay: 200,
   blockedTimeoutMin: 180,
+  // Deliberately the same number as the escalation timeout above: one clock to
+  // reason about, and a job whose runs legitimately outlast it is the reason to
+  // make this per-job rather than to raise it for the whole box.
+  holdTimeoutMin: 180,
   workerRateSeed: 0.35,
 } as const
 
@@ -192,6 +196,7 @@ export function parseConfig(text: string): { config: Config; errors: string[] } 
       releaseBefore: num(raw.releaseBefore, "releaseBefore", DEFAULTS.releaseBefore, errs),
       maxSpawnsPerDay: num(raw.maxSpawnsPerDay, "maxSpawnsPerDay", DEFAULTS.maxSpawnsPerDay, errs),
       blockedTimeoutMin: num(raw.blockedTimeoutMin, "blockedTimeoutMin", DEFAULTS.blockedTimeoutMin, errs),
+      holdTimeoutMin: num(raw.holdTimeoutMin, "holdTimeoutMin", DEFAULTS.holdTimeoutMin, errs),
       workerRateSeed,
     },
     errors: errs,

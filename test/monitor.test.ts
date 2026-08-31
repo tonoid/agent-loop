@@ -21,6 +21,7 @@ function harness(o: {
   panes?: { cwd: string; paneId: string; tabId: string }[]
   marks?: [string, string][]
   blockedAgeMin?: number
+  spawnedAgeMin?: number
   live?: boolean
 }) {
   const log: Decision[] = []
@@ -28,6 +29,7 @@ function harness(o: {
   const marks = openState(":memory:")
   for (const [key, mark] of o.marks ?? []) marks.set("review", key, mark)
   if (o.blockedAgeMin !== undefined) marks.backdate("review", "80", "blocked", o.blockedAgeMin)
+  if (o.spawnedAgeMin !== undefined) marks.backdate("review", "80", "spawned", o.spawnedAgeMin)
   const ctx = makeCtx({
     workspace: {
       name: "acme", dir: "/w", journalPath: "/w/journal.md",
@@ -35,7 +37,7 @@ function harness(o: {
       naming: { labels: { claim: "agent-wip", failed: "agent-failed", park: "needs-human", priority: [] }, mergeMethod: "squash" },
       jobs: [],
     },
-    config: { blockedTimeoutMin: 180 } as any,
+    config: { blockedTimeoutMin: 180, holdTimeoutMin: 180 } as any,
     now: new Date("2026-08-19T09:00:00Z"),
     live: o.live ?? false,
     sleep: async () => {},
@@ -293,4 +295,67 @@ test("a blocked worker pings once, and only under live", async () => {
   })
   await only(dry)
   expect(dry.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+// The hold with no clock on it. A worker wedged in `working` kept its claim and
+// its slot with nothing counting the minutes, which is how a finished run held
+// content-ops-run's only slot for two hours behind a leftover shell.
+test("a working agent past the hold timeout notifies once, then goes back to busy", async () => {
+  const first = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 400,
+    live: true,
+  })
+  expect(await only(first)).toMatchObject({ action: "overdue" })
+  expect(first.calls.filter((c) => c[0] === "notify")).toHaveLength(1)
+
+  // The mark is the once-only latch: the next tick reports busy and pings nobody.
+  const again = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    marks: [["80", "spawned"], ["80", "overdue"]],
+    spawnedAgeMin: 400,
+    live: true,
+  })
+  expect(await only(again)).toMatchObject({ action: "busy" })
+  expect(again.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+test("a working agent inside the hold timeout is just busy", async () => {
+  const h = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 20,
+    live: true,
+  })
+  expect(await only(h)).toMatchObject({ action: "busy" })
+  expect(h.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+// Never kill on the timer: the notification is the whole behaviour. A run that
+// is genuinely mid-write must survive being overdue.
+test("an overdue working agent is never failed or nudged", async () => {
+  const h = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 5000,
+    live: true,
+  })
+  const d = await only(h)
+  expect(["fail", "nudge", "escalate", "restart"]).not.toContain((d as any).action)
+})
+
+test("a dry tick reports overdue and pings nobody", async () => {
+  const h = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 400,
+  })
+  expect(await only(h)).toMatchObject({ action: "overdue" })
+  expect(h.calls.filter((c) => c[0] === "notify")).toEqual([])
 })

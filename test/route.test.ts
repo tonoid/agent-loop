@@ -70,6 +70,7 @@ function build(o: {
     releaseBefore: 120,
     maxSpawnsPerDay: 200,
     blockedTimeoutMin: 180,
+    holdTimeoutMin: 180,
     workerRateSeed: 0.05,
     workspaces: [],
     ...o.config,

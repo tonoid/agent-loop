@@ -1,5 +1,6 @@
 import type { Ctx, Job, Decision, MonitorAction } from "../types"
 import { worktreePath, matchesCwd } from "./naming"
+import { notifyOverdue } from "../overdue"
 import { applyDone, applyNudge, applyEscalate, applyRestart, applyFail, applyNotifyBlocked } from "../effects/monitor"
 
 export async function monitorJob(ctx: Ctx, p: Job): Promise<Decision[]> {
@@ -47,7 +48,11 @@ export async function monitorJob(ctx: Ctx, p: Job): Promise<Decision[]> {
     const agent = agents.find((a) => matchesCwd(a.cwd, wt))
 
     if (agent?.status === "working") {
-      out.push(mk("busy", "agent working"))
+      // Working is the one agent state with no way out of it: an agent that
+      // never stops reporting it keeps its claim and its job's slot for good.
+      // Say so once and go on holding, since the agent may be genuinely busy.
+      const overdue = await notifyOverdue(ctx, p.name, key, "still working")
+      out.push(overdue ? mk("overdue", overdue) : mk("busy", "agent working"))
       continue
     }
 

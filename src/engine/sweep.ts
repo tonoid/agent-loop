@@ -1,6 +1,7 @@
 import type { Ctx, Job, Decision, WorkItem } from "../types"
 import { owns, keyOf, matchesCwd } from "./naming"
 import { applySweep } from "../effects/sweep"
+import { notifyOverdue } from "../overdue"
 import { auditFiling } from "../filing"
 import { appendJournal } from "../journal"
 import { renderDecision } from "../render"
@@ -36,18 +37,26 @@ export async function sweepJob(ctx: Ctx, p: Job): Promise<Decision[]> {
   for (const wt of worktrees) {
     if (!owns(p.name, base, wt)) continue
     const rawKey = keyOf(p.name, wt.branch)!
-    const mk = (action: "clean" | "hold", reason: string): Decision => ({
+    const mk = (action: "clean" | "hold" | "overdue", reason: string): Decision => ({
       pass: "sweep", job: p.name, worktree: wt.path, branch: wt.branch!, action, reason,
     })
+    // Both holds below are unbounded by design, and this pass is the only one
+    // that sees the second of them: an item whose done() has turned true has
+    // already lost its claim, so monitor stops looking at it while its worktree
+    // waits here on a sweepOk that something outside the loop owns.
+    const held = async (reason: string, what: string) => {
+      const overdue = await notifyOverdue(ctx, p.name, rawKey, what)
+      out.push(overdue ? mk("overdue", overdue) : mk("hold", reason))
+    }
 
     const live = agents.some((a) => a.status === "working" && matchesCwd(a.cwd, wt.path))
     if (live && !p.sweepIgnoresWorking) {
-      out.push(mk("hold", "agent working"))
+      await held("agent working", "holding a worktree open for a working agent")
       continue
     }
     const predicate = p.sweepOk ? "sweepOk" : "done"
     if (!(await isFinished(ctx, p, rawKey))) {
-      out.push(mk("hold", `${predicate}(${rawKey}) false`))
+      await held(`${predicate}(${rawKey}) false`, `waiting on ${predicate}(${rawKey})`)
       continue
     }
     out.push(mk("clean", `${predicate}(${rawKey})`))

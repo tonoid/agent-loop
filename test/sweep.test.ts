@@ -16,9 +16,15 @@ function harness(opts: {
   captureDone?: (item: WorkItem) => void
   doneResult?: boolean
   live?: boolean
+  marks?: [string, string][]
+  spawnedAgeMin?: number
 }) {
   const log: Decision[] = []
   const removed: string[] = []
+  const calls: any[][] = []
+  const marks = openState(":memory:")
+  for (const [key, mark] of opts.marks ?? []) marks.set("review", key, mark)
+  if (opts.spawnedAgeMin !== undefined) marks.backdate("review", "80", "spawned", opts.spawnedAgeMin)
   const ctx = makeCtx({
     workspace: {
       name: "acme", dir: "/w", journalPath: "/w/journal.md",
@@ -26,7 +32,7 @@ function harness(opts: {
       naming: { labels: { claim: "agent-wip", failed: "agent-failed", park: "needs-human", priority: [] }, mergeMethod: "squash" },
       jobs: [],
     },
-    config: {} as any,
+    config: { holdTimeoutMin: 180 } as any,
     now: new Date("2026-08-19T09:00:00Z"),
     live: opts.live ?? false,
     sleep: async () => {},
@@ -40,8 +46,13 @@ function harness(opts: {
         throw new Error("worktree is dirty")
       },
     }) as any,
-    herdr: { agents: async () => opts.agents ?? [], panes: async () => [], protocol: async () => 19 } as any,
-    marks: openState(":memory:"),
+    herdr: {
+      agents: async () => opts.agents ?? [],
+      panes: async () => [],
+      protocol: async () => 19,
+      notify: async (title: string, body: string) => { calls.push(["notify", title, body]) },
+    } as any,
+    marks,
     global: openGlobalState(":memory:"),
     usageFor: async () => ({ readable: false, reason: "not used by this test" }),
     memAvailableMb: async () => 8000,
@@ -63,7 +74,7 @@ function harness(opts: {
     brief: async () => "go",
     sweepOk: opts.sweepOk ? async (_c, k) => opts.sweepOk!(k) : undefined,
   }
-  return { ctx, p, log, removed }
+  return { ctx, p, log, removed, calls, marks }
 }
 
 test("an owned worktree whose work is finished is swept", async () => {
@@ -189,4 +200,71 @@ test("without live the executor never runs", async () => {
   const out = await sweepJob(h.ctx, h.p)
   expect(h.removed).toEqual([])
   expect(out.some((d) => d.pass === "error")).toBe(false)
+})
+
+// The hold that stranded PR #418 for eight hours and #420 for one: sweepOk stays
+// false because nothing outside the loop will ever make it true, and the loop
+// holds correctly and silently. Monitor cannot cover this one: the item is
+// already done by then, so its claim is off and monitor never looks at it again.
+test("a worktree held past the hold timeout notifies once, then holds quietly", async () => {
+  const first = harness({
+    worktrees: [{ path: `${BASE}/wt-review-80`, branch: "review/80" }],
+    sweepOk: () => false,
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 600,
+    live: true,
+  })
+  const d = (await sweepJob(first.ctx, first.p))[0]!
+  expect(d).toMatchObject({ action: "overdue" })
+  expect(first.calls.filter((c) => c[0] === "notify")).toHaveLength(1)
+  expect(first.removed).toEqual([])
+
+  const again = harness({
+    worktrees: [{ path: `${BASE}/wt-review-80`, branch: "review/80" }],
+    sweepOk: () => false,
+    marks: [["80", "spawned"], ["80", "overdue"]],
+    spawnedAgeMin: 600,
+    live: true,
+  })
+  expect((await sweepJob(again.ctx, again.p))[0]!).toMatchObject({ action: "hold" })
+  expect(again.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+test("a worktree held on a working agent past the timeout notifies too", async () => {
+  const h = harness({
+    worktrees: [{ path: `${BASE}/wt-review-80`, branch: "review/80" }],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "working", paneId: "p" }],
+    sweepOk: () => true,
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 600,
+    live: true,
+  })
+  expect((await sweepJob(h.ctx, h.p))[0]!).toMatchObject({ action: "overdue" })
+  expect(h.calls.filter((c) => c[0] === "notify")).toHaveLength(1)
+  // Notifying must not sweep a worktree with a live agent in it.
+  expect(h.removed).toEqual([])
+})
+
+test("a worktree held inside the timeout holds without a ping", async () => {
+  const h = harness({
+    worktrees: [{ path: `${BASE}/wt-review-80`, branch: "review/80" }],
+    sweepOk: () => false,
+    marks: [["80", "spawned"]],
+    spawnedAgeMin: 20,
+    live: true,
+  })
+  expect((await sweepJob(h.ctx, h.p))[0]!).toMatchObject({ action: "hold" })
+  expect(h.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+// An occurrence with no spawned mark has no age to measure, and guessing one
+// would ping for every worktree an operator adopted or imported.
+test("a worktree with no spawned mark holds without a ping", async () => {
+  const h = harness({
+    worktrees: [{ path: `${BASE}/wt-review-80`, branch: "review/80" }],
+    sweepOk: () => false,
+    live: true,
+  })
+  expect((await sweepJob(h.ctx, h.p))[0]!).toMatchObject({ action: "hold" })
+  expect(h.calls.filter((c) => c[0] === "notify")).toEqual([])
 })

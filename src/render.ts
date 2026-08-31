@@ -14,13 +14,16 @@ export function renderDecision(d: Decision, live = false): string {
     case "tick":
       return `TICK ${d.workspace} ${d.ms}ms`
     case "sweep":
-      return d.action === "clean"
-        ? `${would("sweep")} ${d.job} ${d.worktree} (${d.reason})`
-        : `HOLD ${d.job} ${d.worktree} (${d.reason})`
+      if (d.action === "clean") return `${would("sweep")} ${d.job} ${d.worktree} (${d.reason})`
+      // OVERDUE is a held worktree with a notification sent about it, so it
+      // reads as its own verb and appears once, not every tick like HOLD.
+      if (d.action === "overdue") return `OVERDUE ${d.job} ${d.worktree} (${d.reason})`
+      return `HOLD ${d.job} ${d.worktree} (${d.reason})`
     case "monitor":
       if (d.action === "busy") return `BUSY ${d.job} ${d.key} (${d.reason})`
       if (d.action === "hold") return `HOLD ${d.job} ${d.key} (${d.reason})`
       if (d.action === "blocked") return `BLOCKED ${d.job} ${d.key} (${d.reason})`
+      if (d.action === "overdue") return `OVERDUE ${d.job} ${d.key} (${d.reason})`
       return WOULD.has(d.action)
         ? `${would(d.action)} ${d.job} ${d.key} (${d.reason})`
         : `${d.action.toUpperCase()} ${d.job} ${d.key} (${d.reason})`
