@@ -69,6 +69,19 @@ test("herdr agents map status and treat an unknown status as missing", async () 
   ])
 })
 
+// "done" is in herdr's enum and was reaching this engine as "missing", which
+// every consumer reads as no information. It carries plenty: the agent finished.
+test("a done agent maps to done rather than collapsing into missing", async () => {
+  const herdr = makeHerdr(async () => ({
+    result: {
+      agents: [{ cwd: "/w/wt-review-r257", agent_status: "done", pane_id: "w7:pB" }],
+    },
+  }), async () => "")
+  expect(await herdr.agents()).toEqual([
+    { cwd: "/w/wt-review-r257", status: "done", paneId: "w7:pB" },
+  ])
+})
+
 test("git lsRemote extracts full branch names past the first refs/heads/ prefix", async () => {
   const calls: string[][] = []
   const LS_REMOTE = [

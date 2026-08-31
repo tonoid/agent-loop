@@ -41,7 +41,16 @@ async function inFlightByAccount(ctx: Ctx): Promise<Map<string, number>> {
     const agents = await ctx.cache("engine:agents", () => ctx.herdr.agents())
     const out = new Map<string, number>()
     for (const a of agents) {
-      if (a.status === "missing") continue
+      // "missing" is no information, and "done" is an agent that has finished:
+      // neither is spending quota, and counting either holds an account's budget
+      // behind a worker that has gone home. On 2026-08-31 a maplista reviewer
+      // finished its round and left three polling shells behind, which kept
+      // herdr reporting "working" and starved the only eligible account with the
+      // merge one step away. The shells were the bug and a Stop hook now kills
+      // them, but the same starvation follows from any finished agent whose
+      // worktree is legitimately held open, which for a reviewer is every round
+      // until its pull request closes.
+      if (a.status === "missing" || a.status === "done") continue
       const account = attribute(ctx, a.cwd)
       if (account) out.set(account, (out.get(account) ?? 0) + 1)
     }
