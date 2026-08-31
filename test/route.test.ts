@@ -182,6 +182,66 @@ test("an unreadable account stays out, and allowWhenUnreadable is the way back i
   expect(await chooseAccount(back.ctx, job(), item())).toMatchObject({ ok: true, account: "loop" })
 })
 
+// The endpoint answers about five calls a minute per token and shares that
+// budget with every interactive claude on the box, so a healthy account draws
+// a 429 on a busy minute and the reader caches it for five. Benching the
+// account for those five minutes throws away the reading the tick two minutes
+// earlier took, which is still true: on 2026-08-31 a session window moved two
+// points in half an hour under two workers, so a reading of that age is off by
+// a fraction of a point against a ceiling of 90.
+test("an unreadable account is priced on its last stored reading", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  global.recordUsage("loop", {
+    kind: "session", group: "session", percent: 10,
+    resetsAt: new Date(NOW.getTime() + 200 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 2 * 60000),
+  })
+  const r = await chooseAccount(ctx, job(), item())
+  expect(r).toMatchObject({ ok: true, account: "loop" })
+  // The log has to say the number is not a fresh one, or an operator reading
+  // STARVED-then-SPAWN has no way to tell which readings the loop acted on.
+  expect(r.ok === true && r.reason).toContain("stale")
+  expect(r.ok === true && r.reason).toContain("429 from the usage endpoint")
+})
+
+// The bound is what separates a burst from an account nobody can read at all.
+// A reading old enough to have been overtaken by the workers it priced is not
+// evidence, and an account that has been unreadable for twenty minutes has
+// something wrong with it that a stale number would hide.
+test("a stored reading past the stale bound rescues nothing", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  global.recordUsage("loop", {
+    kind: "session", group: "session", percent: 10,
+    resetsAt: new Date(NOW.getTime() + 200 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 20 * 60000),
+  })
+  expect(await chooseAccount(ctx, job(), item())).toEqual({
+    ok: false, global: false, reason: "STARVED no eligible account",
+  })
+})
+
+// A stale reading prices an account, it does not teach the fleet. The rate
+// EWMA is fed by the delta between two live readings, and a reading replayed
+// against a later clock is the same number at a different time: nothing spent.
+test("a stale reading still refuses an account whose window is spent", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop", { reserve: 20 })],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  global.recordUsage("loop", {
+    kind: "session", group: "session", percent: 95,
+    resetsAt: new Date(NOW.getTime() + 200 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 2 * 60000),
+  })
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
+})
+
 test("requires filters the pool and prefer orders it", async () => {
   // "other" sorts after both "loop" and "main", so the id tie-break cannot
   // hand it the win by accident: it only wins because requires excluded them.
