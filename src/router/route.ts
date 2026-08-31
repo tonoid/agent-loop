@@ -122,9 +122,18 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
       // Unreadable is ineligible, not "usable but ranked last": the last-resort
       // reading sends work to the account most likely already exhausted,
       // precisely when every other account is out. A 429 is never opted back in.
-      if (usage.exhausted || !a.allowWhenUnreadable) continue
-      concurrency = max
-      why = `unreadable but allowed (${usage.reason})`
+      if (usage.exhausted) continue
+      if (!usage.fresh && !a.allowWhenUnreadable) continue
+      // A fresh account gets one worker and not its clamp. It has no readings,
+      // so there is no evidence of headroom to spend, and one worker is all it
+      // takes to record the first window: the tick after it can rank the
+      // account on measurements like any other. One is also what stops a
+      // payload that never gains windows from spawning every tick, because the
+      // worker already in flight fails the concurrency <= have test below.
+      concurrency = usage.fresh ? Math.min(1, max) : max
+      why = usage.fresh
+        ? `fresh, one worker to record the first window (${usage.reason})`
+        : `unreadable but allowed (${usage.reason})`
     } else {
       recordAndLearn(ctx.global, a, usage.windows, have)
       const b = concurrencyFor({

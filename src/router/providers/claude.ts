@@ -56,6 +56,13 @@ export function writeCreds(configDir: string, creds: Creds): void {
 const no = (reason: string, exhausted?: boolean): AccountUsage =>
   exhausted ? { readable: false, reason, exhausted } : { readable: false, reason }
 
+// A window that has never started has nothing to reset, so a brand new login
+// answers 200 with no window carrying a resets_at. That is an account with no
+// usage yet, not a broken one, and the router admits one worker on it rather
+// than skipping it forever: nothing else on the box will record the first
+// window for it.
+const fresh = (reason: string): AccountUsage => ({ readable: false, reason, fresh: true })
+
 function resetsAtOf(raw: unknown): Date | null {
   if (raw === null || raw === undefined) return null
   const d = typeof raw === "number" ? new Date(raw * 1000) : new Date(String(raw))
@@ -119,7 +126,7 @@ export function makeClaudeReader(d: ClaudeDeps): UsageReader {
       })
     }
 
-    if (windows.length === 0) return no("no usable limit windows in the payload")
+    if (windows.length === 0) return fresh("no usage windows yet, nothing has run on this account")
     const bad = checkWindows(windows, now)
     return bad ? no(bad) : { readable: true, windows }
   }

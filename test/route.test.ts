@@ -126,6 +126,44 @@ test("allowWhenUnreadable opts an account back in at its own clamp", async () =>
   expect(r).toMatchObject({ ok: true, account: "alt" })
 })
 
+// A newly logged-in account has started no window, so nothing in its payload
+// carries a reset time and the reader can only call it unreadable. Left there
+// the loop never spawns on it, so it never records the usage that would make it
+// readable, and a working account looks broken until a human runs something on
+// it by hand.
+test("a fresh account is admitted for one worker, without allowWhenUnreadable", async () => {
+  const { ctx } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "no usage windows yet", fresh: true } },
+  })
+  const r = await chooseAccount(ctx, job(), item())
+  expect(r).toMatchObject({ ok: true, account: "loop" })
+  expect(r).toHaveProperty("reason", expect.stringContaining("fresh"))
+})
+
+// One worker, not the account's clamp: an account with no readings has no
+// evidence of headroom, and one is all it takes to produce the first window.
+test("a fresh account never outranks one with measured headroom", async () => {
+  const { ctx } = build({
+    accounts: [acct("loop"), acct("main")],
+    usage: { loop: { readable: false, reason: "no usage windows yet", fresh: true }, main: roomy() },
+  })
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: true, account: "main" })
+})
+
+// The one worker it is allowed is also the one that ends the fresh state, so a
+// payload that never gains windows cannot turn into a spawn every tick.
+test("a fresh account already running its one worker is not admitted again", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "no usage windows yet", fresh: true } },
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "working", paneId: "w1:p1" }],
+  })
+  // The spawns table is what attributes a live worker to an account.
+  global.spawnAdd("loop", "acme", "review", "r80", NOW)
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
+})
+
 test("a 429 stays out even with allowWhenUnreadable", async () => {
   const { ctx } = build({
     accounts: [acct("loop", { allowWhenUnreadable: true })],

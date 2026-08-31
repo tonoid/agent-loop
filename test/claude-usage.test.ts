@@ -74,6 +74,16 @@ test("a 429 is exhausted, not merely unknown", async () => {
   expect(u.readable === false && u.exhausted).toBe(true)
 })
 
+// Distinct from a 429: no windows means no usage has been recorded yet, which
+// is a brand new login rather than an account that has spent its budget.
+test("a payload with no usable windows is fresh, not merely unreadable", async () => {
+  const { d } = deps({ usage: [{ status: 200, body: { limits: [] } }] })
+  const u = await makeClaudeReader(d)(acct(), NOW)
+  expect(u.readable).toBe(false)
+  expect(u.readable === false && u.fresh).toBe(true)
+  expect(u.readable === false && u.exhausted).toBeUndefined()
+})
+
 test("missing credentials are unreadable and never refreshed", async () => {
   const { d, calls } = deps({ readCreds: async () => null })
   const u = await makeClaudeReader(d)(acct(), NOW)

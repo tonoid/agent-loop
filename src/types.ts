@@ -217,9 +217,11 @@ export interface Window {
 }
 
 // `exhausted` is a 429: strictly more information than "unknown", and the one
-// unreadable state that allowWhenUnreadable must not resurrect.
+// unreadable state that allowWhenUnreadable must not resurrect. `fresh` is its
+// opposite: no window has started, so there is no usage to read rather than too
+// much of it, and the account needs one worker before it can be read at all.
 export type AccountUsage =
   | { readable: true; windows: Window[] }
-  | { readable: false; reason: string; exhausted?: boolean }
+  | { readable: false; reason: string; exhausted?: boolean; fresh?: boolean }
 
 export type UsageReader = (a: AccountConfig, now: Date) => Promise<AccountUsage>
