@@ -10,6 +10,11 @@ export interface UsageSample {
 export interface GlobalStore {
   recordUsage(accountId: string, w: Window): void
   lastUsage(accountId: string, kind: string, beforeMs: number): UsageSample | null
+  // The newest row per kind, for an account the reader cannot reach right now.
+  // `group` and `scope` are not stored, so what comes back prices a window and
+  // does not describe one: group falls back to the kind, and a model scope is
+  // gone. Both are read before a window is recorded, never after.
+  lastWindows(accountId: string, notBeforeMs: number): Window[]
   rate(provider: string, kind: string): number | null
   observeRate(provider: string, kind: string, sample: number): number
   spawnAdd(accountId: string, workspace: string, job: string, key: string, at: Date): void
@@ -80,6 +85,16 @@ export function openGlobalState(path: string): GlobalStore {
      WHERE account = ? AND kind = ? AND at < ?
      ORDER BY at DESC LIMIT 1`,
   )
+  // Bare columns beside MAX(at): SQLite defines them as coming from the row
+  // the aggregate chose, which is the whole point here. One row per kind.
+  const recentUsage = db.query<
+    { kind: string; percent: number; resets_at: number; window_minutes: number; at: number },
+    [string, number]
+  >(
+    `SELECT kind, percent, resets_at, window_minutes, MAX(at) AS at FROM usage
+     WHERE account = ? AND at >= ?
+     GROUP BY kind`,
+  )
   const getRate = db.query<{ ewma: number }, [string, string]>(
     "SELECT ewma FROM rates WHERE provider = ? AND kind = ?",
   )
@@ -133,6 +148,16 @@ export function openGlobalState(path: string): GlobalStore {
     },
     lastUsage(accountId, kind, beforeMs) {
       return prevUsage.get(accountId, kind, beforeMs)
+    },
+    lastWindows(accountId, notBeforeMs) {
+      return recentUsage.all(accountId, notBeforeMs).map((r) => ({
+        kind: r.kind,
+        group: r.kind,
+        percent: r.percent,
+        resetsAt: new Date(r.resets_at),
+        windowMinutes: r.window_minutes,
+        observedAt: new Date(r.at),
+      }))
     },
     rate(provider, kind) {
       return getRate.get(provider, kind)?.ewma ?? null
