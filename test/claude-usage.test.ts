@@ -1,6 +1,9 @@
 // test/claude-usage.test.ts
 import { test, expect } from "bun:test"
-import { makeClaudeReader, REFRESH_MARGIN_MS } from "../src/router/providers/claude"
+import { makeClaudeReader, REFRESH_MARGIN_MS, usageCachePath, readUsageCache, writeUsageCache } from "../src/router/providers/claude"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ClaudeDeps, Creds } from "../src/router/providers/claude"
 import type { AccountConfig } from "../src/types"
 
@@ -67,11 +70,22 @@ test("a second 401 leaves the account unreadable", async () => {
   expect(calls.usage).toBe(2)
 })
 
-test("a 429 is exhausted, not merely unknown", async () => {
+// A 429 from the usage endpoint is its per-token burst budget, about five
+// calls a minute, shared with every interactive claude and every `c` run on
+// the box. It once benched the account for the tick with no way back in.
+test("a 429 is merely unreadable: it is a burst limit, not a quota", async () => {
   const { d } = deps({ usage: [{ status: 429, body: null }] })
   const u = await makeClaudeReader(d)(acct(), NOW)
-  expect(u.readable).toBe(false)
-  expect(u.readable === false && u.exhausted).toBe(true)
+  expect(u).toEqual({ readable: false, reason: "429 from the usage endpoint (burst limit, not quota)" })
+})
+
+test("the reader hands the config dir to getUsage so the answer can be shared", async () => {
+  const seen: string[] = []
+  const { d } = deps({
+    getUsage: async (_t, configDir) => { seen.push(configDir); return { status: 200, body: { limits: [limit()] } } },
+  })
+  await makeClaudeReader(d)(acct({ configDir: "~/.claude-loop" }), NOW)
+  expect(seen).toEqual(["~/.claude-loop"])
 })
 
 // Distinct from a 429: no windows means no usage has been recorded yet, which
@@ -81,7 +95,6 @@ test("a payload with no usable windows is fresh, not merely unreadable", async (
   const u = await makeClaudeReader(d)(acct(), NOW)
   expect(u.readable).toBe(false)
   expect(u.readable === false && u.fresh).toBe(true)
-  expect(u.readable === false && u.exhausted).toBeUndefined()
 })
 
 test("missing credentials are unreadable and never refreshed", async () => {
@@ -119,4 +132,27 @@ test("an insane window makes the whole account unreadable", async () => {
   })
   const u = await makeClaudeReader(d)(acct(), NOW)
   expect(u.readable).toBe(false)
+})
+
+// The cache file is the contract with `c`, which reads and writes the same
+// path and the same shape. Body verbatim: c reads five_hour, we read limits[].
+test("the usage cache lives in the account dir, expires, and holds 429s longer", () => {
+  const dir = mkdtempSync(join(tmpdir(), "al-usage-"))
+  const at = Date.now()
+
+  expect(usageCachePath(dir)).toBe(`${dir}/cache/usage.json`)
+  expect(readUsageCache(dir, at)).toBeNull()
+
+  writeUsageCache(dir, { at, status: 200, body: { limits: [limit()] } })
+  expect(readUsageCache(dir, at + 30_000)?.body.limits).toEqual([limit()])
+  expect(readUsageCache(dir, at + 90_000)).toBeNull()
+
+  writeUsageCache(dir, { at, status: 429, body: null })
+  expect(readUsageCache(dir, at + 90_000)?.status).toBe(429)
+  expect(readUsageCache(dir, at + 6 * 60_000)).toBeNull()
+
+  writeFileSync(usageCachePath(dir), "{ torn")
+  expect(readUsageCache(dir, at)).toBeNull()
+
+  rmSync(dir, { recursive: true, force: true })
 })

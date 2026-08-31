@@ -165,12 +165,21 @@ test("a fresh account already running its one worker is not admitted again", asy
   expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
 })
 
-test("a 429 stays out even with allowWhenUnreadable", async () => {
-  const { ctx } = build({
-    accounts: [acct("loop", { allowWhenUnreadable: true })],
-    usage: { loop: { readable: false, reason: "429", exhausted: true } },
+test("an unreadable account stays out, and allowWhenUnreadable is the way back in", async () => {
+  const out = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
   })
-  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
+  expect(await chooseAccount(out.ctx, job(), item())).toMatchObject({ ok: false, global: false })
+
+  // A 429 from the metering endpoint is the one unreadable reason that used to
+  // be barred from coming back, on the mistaken reading that it proved the
+  // account spent. The operator's opt-in decides now, as it does for grok.
+  const back = build({
+    accounts: [acct("loop", { allowWhenUnreadable: true })],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  expect(await chooseAccount(back.ctx, job(), item())).toMatchObject({ ok: true, account: "loop" })
 })
 
 test("requires filters the pool and prefer orders it", async () => {

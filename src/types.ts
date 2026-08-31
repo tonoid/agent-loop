@@ -218,12 +218,15 @@ export interface Window {
   observedAt: Date
 }
 
-// `exhausted` is a 429: strictly more information than "unknown", and the one
-// unreadable state that allowWhenUnreadable must not resurrect. `fresh` is its
-// opposite: no window has started, so there is no usage to read rather than too
-// much of it, and the account needs one worker before it can be read at all.
+// Unreadable is one state, not two. There was once an `exhausted` variant for
+// a 429, on the theory that it proved the account was spent; it proves only
+// that the usage endpoint's own burst budget is spent, which anything else
+// polling the same account can do on our behalf. An account with no budget
+// left says so in a 200, with its windows at 100%. `fresh` is the other
+// direction: no window has started, so there is no usage to read rather than
+// too much of it, and the account needs one worker before it can be read.
 export type AccountUsage =
   | { readable: true; windows: Window[] }
-  | { readable: false; reason: string; exhausted?: boolean; fresh?: boolean }
+  | { readable: false; reason: string; fresh?: boolean }
 
 export type UsageReader = (a: AccountConfig, now: Date) => Promise<AccountUsage>

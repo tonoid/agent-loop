@@ -52,9 +52,9 @@ test("the claude window map has no undefined minutes for a known kind", () => {
   expect(CLAUDE_WINDOW_MINUTES.weekly_scoped).toBe(10080)
 })
 
-test("grok is always unreadable and never exhausted", async () => {
+test("grok is always unreadable, and says why", async () => {
   const a: AccountConfig = { id: "alt", provider: "grok", configDir: "~/g", reserve: 0 }
   const u = await grokReader(a, NOW)
   expect(u.readable).toBe(false)
-  expect(u.readable === false && u.exhausted).toBeUndefined()
+  expect(u.readable === false && u.reason).toMatch(/no usage signal/)
 })

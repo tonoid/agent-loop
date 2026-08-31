@@ -1,7 +1,8 @@
 import type { AccountConfig, AccountUsage, UsageReader, Window } from "../../types"
 import { CLAUDE_WINDOW_MINUTES, checkWindows } from "../window"
 import { expandHome } from "../../paths"
-import { renameSync, writeFileSync, readFileSync, unlinkSync, statSync } from "node:fs"
+import { renameSync, writeFileSync, readFileSync, unlinkSync, statSync, mkdirSync } from "node:fs"
+import { dirname } from "node:path"
 
 export const USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 export const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
@@ -11,6 +12,15 @@ export const DEFAULT_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 // Access tokens live 8 hours. Refresh inside the last 10 minutes so a tick never
 // starts a read against a token that expires mid-flight.
 export const REFRESH_MARGIN_MS = 10 * 60_000
+// The usage endpoint answers about 5 calls per token per minute, and that
+// budget is not ours alone: an interactive claude spends it on its status
+// line, `c` spends it on its account table, and two workspaces tick in the
+// same minute. So the answer is cached in the account's own config dir, in
+// the format `c` reads and writes, and whoever asks first pays for everyone.
+export const USAGE_TTL_MS = 60_000
+// A 429 is that burst limit, not a quota. Asking again a minute later just
+// draws from the same empty bucket, so hold off longer.
+export const USAGE_429_TTL_MS = 5 * 60_000
 
 export interface Creds {
   accessToken: string
@@ -22,7 +32,46 @@ export interface Creds {
 export interface ClaudeDeps {
   readCreds(configDir: string): Promise<Creds | null>
   refresh(c: Creds, clientId: string, configDir: string): Promise<Creds>
-  getUsage(token: string): Promise<{ status: number; body: any }>
+  // configDir only so the live implementation can share its answer through
+  // that account's cache. A reader that has its own source ignores it.
+  getUsage(token: string, configDir: string): Promise<{ status: number; body: any }>
+}
+
+export interface CachedUsage {
+  at: number
+  status: number
+  body: any
+}
+
+export const usageCachePath = (configDir: string): string =>
+  `${expandHome(configDir)}/cache/usage.json`
+
+export function readUsageCache(configDir: string, now: number): CachedUsage | null {
+  let c: CachedUsage
+  try {
+    c = JSON.parse(readFileSync(usageCachePath(configDir), "utf8"))
+  } catch {
+    // Absent, or half-written by a reader that lost the race. Both mean ask.
+    return null
+  }
+  if (!c?.at || typeof c.status !== "number") return null
+  return now - c.at < (c.status === 429 ? USAGE_429_TTL_MS : USAGE_TTL_MS) ? c : null
+}
+
+// Body verbatim, because the readers of this file want different parts of it:
+// `limits[]` here, `five_hour` in c. Neither has to know about the other.
+export function writeUsageCache(configDir: string, entry: CachedUsage): void {
+  const path = usageCachePath(configDir)
+  // Unique per writer, for the reason spelled out in writeCreds.
+  const tmp = `${path}.${process.pid}.tmp`
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(tmp, JSON.stringify(entry), { mode: 0o600 })
+    renameSync(tmp, path)
+  } catch {
+    // A cache we cannot write costs a call, not a tick.
+    try { unlinkSync(tmp) } catch {}
+  }
 }
 
 // Atomic: a torn credentials file locks the account out until a human logs in
@@ -53,8 +102,7 @@ export function writeCreds(configDir: string, creds: Creds): void {
   }
 }
 
-const no = (reason: string, exhausted?: boolean): AccountUsage =>
-  exhausted ? { readable: false, reason, exhausted } : { readable: false, reason }
+const no = (reason: string): AccountUsage => ({ readable: false, reason })
 
 // A window that has never started has nothing to reset, so a brand new login
 // answers 200 with no window carrying a resets_at. That is an account with no
@@ -87,19 +135,22 @@ export function makeClaudeReader(d: ClaudeDeps): UsageReader {
       }
     }
 
-    let res = await d.getUsage(creds.accessToken)
+    let res = await d.getUsage(creds.accessToken, a.configDir)
     if (res.status === 401) {
       try {
         creds = await d.refresh(creds, clientId, a.configDir)
       } catch (err) {
         return no(`refresh after 401 failed: ${err}`)
       }
-      res = await d.getUsage(creds.accessToken)
+      res = await d.getUsage(creds.accessToken, a.configDir)
       if (res.status === 401) return no("401 after refresh")
     }
-    // Exhausted is strictly more information than unknown, and unlike every
-    // other unreadable state allowWhenUnreadable must not resurrect it.
-    if (res.status === 429) return no("429 from the usage endpoint", true)
+    // Unreadable, and nothing stronger. A 429 here is the metering endpoint's
+    // own burst budget, which anything else polling this account can spend on
+    // our behalf, and it says nothing about quota: an account measured at 3%
+    // of its session and 39% of its week answers 429 on the fifth call in a
+    // minute. Real exhaustion arrives as a 200 with the windows at 100%.
+    if (res.status === 429) return no("429 from the usage endpoint (burst limit, not quota)")
     if (res.status !== 200) return no(`usage endpoint ${res.status}`)
 
     const windows: Window[] = []
@@ -171,14 +222,26 @@ export function liveClaudeDeps(live = false): ClaudeDeps {
       if (live) writeCreds(configDir, next)
       return next
     },
-    async getUsage(token) {
+    async getUsage(token, configDir) {
+      const hit = readUsageCache(configDir, Date.now())
+      if (hit) return { status: hit.status, body: hit.body }
+
       const r = await fetch(USAGE_URL, {
         headers: {
           authorization: `Bearer ${token}`,
           "anthropic-beta": "oauth-2025-04-20",
         },
       })
-      return { status: r.status, body: r.status === 200 ? await r.json() : null }
+      const entry: CachedUsage = {
+        at: Date.now(),
+        status: r.status,
+        body: r.status === 200 ? await r.json() : null,
+      }
+      // Never cache a 401: it is a fact about this token, not about the
+      // account, and the caller refreshes and retries immediately. A cached
+      // one would answer that retry with the answer it just refreshed away.
+      if (entry.status !== 401) writeUsageCache(configDir, entry)
+      return { status: entry.status, body: entry.body }
     },
   }
 }

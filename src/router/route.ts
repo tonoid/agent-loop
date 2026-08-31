@@ -121,8 +121,9 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     if (!usage.readable) {
       // Unreadable is ineligible, not "usable but ranked last": the last-resort
       // reading sends work to the account most likely already exhausted,
-      // precisely when every other account is out. A 429 is never opted back in.
-      if (usage.exhausted) continue
+      // precisely when every other account is out. allowWhenUnreadable is the
+      // deliberate way back in, and it covers every unreadable reason: no
+      // reader can prove an account spent without a reading to prove it with.
       if (!usage.fresh && !a.allowWhenUnreadable) continue
       // A fresh account gets one worker and not its clamp. It has no readings,
       // so there is no evidence of headroom to spend, and one worker is all it
