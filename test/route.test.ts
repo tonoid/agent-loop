@@ -270,6 +270,22 @@ test("low memory only blocks while something is in flight", async () => {
   expect(r.ok === false && r.reason).toContain("LOWMEM")
 })
 
+// The maplista stall of 2026-08-31: a reviewer that had finished its round held
+// the only eligible account, because its worktree stays until the pull request
+// closes and anything not "missing" counted as a worker in flight.
+test("an agent that has finished does not count as a worker in flight", async () => {
+  const done = build({
+    accounts: [acct("loop")],
+    usage: { loop: roomy() },
+    memMb: 100,
+    agents: [{ cwd: `${BASE}/wt-review-r257`, status: "done", paneId: "pB" }],
+  })
+  done.global.spawnAdd("loop", "acme", "review", "r257", new Date("2026-08-19T08:00:00Z"))
+  // Low memory only bites while something is in flight, so a pass here proves
+  // the finished agent was not counted.
+  expect(await chooseAccount(done.ctx, job(), item())).toMatchObject({ ok: true })
+})
+
 test("routing a readable account records its usage for the next tick", async () => {
   const { ctx, global } = build({ accounts: [acct("loop")], usage: { loop: roomy() } })
   await chooseAccount(ctx, job(), item())

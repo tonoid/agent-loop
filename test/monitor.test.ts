@@ -150,6 +150,18 @@ test("an agent with an unrecognized status holds, and is neither nudged nor fail
   }
 })
 
+// A worker that reports done while its item is still claimed stopped without
+// following its protocol. That is the nudge case, not the hold case: holding on
+// it keeps the claim and the job's slot for good.
+test("a done agent on a claimed item is nudged rather than held", async () => {
+  const h = harness({
+    claimed: [item(80)],
+    agents: [{ cwd: `${BASE}/wt-review-80`, status: "done", paneId: "p" }],
+  })
+  const d = await only(h)
+  expect(d).toMatchObject({ pass: "monitor", action: "nudge" })
+})
+
 // T1
 test("one harness visited twice: nudge writes the mark the next visit reads, then fails", async () => {
   const h = harness({

@@ -39,7 +39,10 @@ export type HerdrRead = Herdr
 // the spec: check it, warn loudly on a mismatch, never refuse to run.
 export const TESTED_PROTOCOL = 19
 
-const KNOWN: AgentStatus[] = ["working", "blocked", "idle"]
+// Everything herdr's AgentStatus enum holds except "unknown", which is herdr
+// reporting that it has no status for this agent yet: a starting worker reads
+// that way for a few seconds, so it has to mean "no information" and not "gone".
+const KNOWN: AgentStatus[] = ["working", "blocked", "idle", "done"]
 
 function toStatus(s: unknown): AgentStatus {
   return KNOWN.includes(s as AgentStatus) ? (s as AgentStatus) : "missing"

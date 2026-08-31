@@ -88,7 +88,11 @@ export interface WorkItem {
   createdAt?: string
 }
 
-export type AgentStatus = "working" | "blocked" | "idle" | "missing"
+// herdr's own enum is idle, working, blocked, done, unknown. "done" is herdr
+// saying the agent finished and is not coming back on its own, which is a fact
+// worth acting on; "unknown" and anything herdr adds later map to "missing",
+// which every consumer here treats as no information and holds on.
+export type AgentStatus = "working" | "blocked" | "idle" | "done" | "missing"
 
 export interface AgentView {
   cwd: string
