@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname } from "node:path"
 import { runCheck, type CheckDeps } from "../src/check"
+import { TESTED_PROTOCOL } from "../src/adapters/herdr"
 import type { Kind } from "../src/kinds"
 import type { Job } from "../src/types"
 
@@ -16,7 +17,7 @@ const builder: Kind = {
 const deps = (o: Partial<CheckDeps> = {}): CheckDeps => ({
   which: () => "/usr/bin/x",
   ghAuth: async () => true,
-  protocol: async () => 19,
+  protocol: async () => TESTED_PROTOCOL,
   herdrWorkspaces: async () => ["acme"],
   readConfig: async () => null,
   ...o,
@@ -82,10 +83,10 @@ test("a protocol mismatch warns without failing the check", async () => {
     configPath: "/nope",
     workspaceDir: tree(),
     kinds: { builder },
-    deps: deps({ protocol: async () => 21 }),
+    deps: deps({ protocol: async () => TESTED_PROTOCOL + 1 }),
   })
   expect(ok).toBe(true)
-  expect(lines.some((l) => l.startsWith("WARN herdr protocol 21, tested"))).toBe(true)
+  expect(lines.some((l) => l.startsWith(`WARN herdr protocol ${TESTED_PROTOCOL + 1}, tested`))).toBe(true)
 })
 
 test("an unauthenticated gh fails the check", async () => {
