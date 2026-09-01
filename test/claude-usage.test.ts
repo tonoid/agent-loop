@@ -76,7 +76,13 @@ test("a second 401 leaves the account unreadable", async () => {
 test("a 429 is merely unreadable: it is a burst limit, not a quota", async () => {
   const { d } = deps({ usage: [{ status: 429, body: null }] })
   const u = await makeClaudeReader(d)(acct(), NOW)
-  expect(u).toEqual({ readable: false, reason: "429 from the usage endpoint (burst limit, not quota)" })
+  // transient: the endpoint was busy, the account is fine, so the router may
+  // price it on an older reading rather than benching it.
+  expect(u).toEqual({
+    readable: false,
+    reason: "429 from the usage endpoint (burst limit, not quota)",
+    transient: true,
+  })
 })
 
 // The endpoint may hand back a new refresh token and invalidate the one that
@@ -160,6 +166,9 @@ test("missing credentials are unreadable and never refreshed", async () => {
   const u = await makeClaudeReader(d)(acct(), NOW)
   expect(u.readable).toBe(false)
   expect(calls.refresh).toBe(0)
+  // Not transient: a worker cannot authenticate without credentials, so this
+  // must never be rescued by an older usage reading.
+  expect(u.readable === false && u.transient).toBeUndefined()
 })
 
 test("an unrecognized kind throws instead of poisoning the arithmetic", async () => {

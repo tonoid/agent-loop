@@ -41,7 +41,13 @@ export const STALE_USAGE_MS = 30 * 60_000
 // budget prices workers with, so this errs the way that model errs and adds no
 // second opinion of its own.
 function staleWindows(ctx: Ctx, a: AccountConfig, usage: AccountUsage, workers: number): Window[] {
-  if (usage.readable || usage.fresh) return []
+  // Only when the metering endpoint failed, never when the account did. An
+  // account whose credentials are missing or whose refresh was refused cannot
+  // authenticate a worker, and no usage number changes that: on 2026-09-01 half
+  // an hour of a missing credentials file spawned six builders that each met
+  // "Invalid API key, please run /login", failed, and labelled a sound issue
+  // agent-failed on the way out.
+  if (usage.readable || usage.fresh || !usage.transient) return []
   const windows = ctx.global.lastWindows(a.id, ctx.now.getTime() - STALE_USAGE_MS)
   if (windows.length === 0 || checkWindows(windows, ctx.now)) return []
   return windows.map((w) => {
@@ -160,7 +166,9 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     // it gets turned into the same unreadable shape a reader would return on
     // purpose.
     const usage = await ctx.usage(a).catch(
-      (err): AccountUsage => ({ readable: false, reason: `read failed: ${err}` }),
+      // Transient: a reader that threw is a reader that could not complete its
+      // read, which says nothing about the account behind it.
+      (err): AccountUsage => ({ readable: false, reason: `read failed: ${err}`, transient: true }),
     )
     const max = a.maxConcurrent ?? cfg.maxConcurrentPerAccount
     const have = inFlight.get(a.id) ?? 0
