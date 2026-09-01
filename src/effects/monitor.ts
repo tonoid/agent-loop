@@ -3,6 +3,7 @@ import { worktreePath, matchesCwd } from "../engine/naming"
 import { itemKind, repoOf, trackerless } from "../engine/item"
 import { startWorker } from "../runtime/worker"
 import { preClean } from "./spawn"
+import { appendJournal } from "../journal"
 
 // The same write as the spawn rollback's. A finished item keeps its claim
 // label otherwise, and discoverClaimed reads --state all, so the label would
@@ -144,5 +145,18 @@ export async function applyFail(ctx: Ctx, p: Job, item: WorkItem, key: string): 
     kind,
     item.number,
     `The loop could not finish this item and has stopped working it.\n\nLast ${FAIL_TAIL_LINES} lines of the worker's transcript:\n\n\`\`\`\n${tail}\n\`\`\`\n\nRemove the \`${labels.failed}\` label to let the loop retry it.`,
+  )
+  // Last, because the comment is the post-mortem a human actually answers and
+  // must not be lost to a journal that cannot be written. The label above
+  // already stops the item being re-picked, so there is nothing to race.
+  //
+  // Every other outcome writes a journal line and this one did not, so when six
+  // builders failed inside seventeen minutes on 2026-09-01 they left nothing
+  // behind but a label each, and reconstructing it took the tick log and six
+  // workers' transcripts. One line: the tail belongs on the item, where the
+  // human answering it needs it, and the journal is read as a story of the day.
+  appendJournal(
+    ctx,
+    `FAIL ${p.name} ${key}: gave up and labelled ${labels.failed} on ${repo}#${item.number}, transcript tail on the item`,
   )
 }

@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { applyNudge, applyEscalate } from "../src/effects/monitor"
 import type { Ctx, Job, WorkItem } from "../src/types"
 
@@ -85,12 +88,13 @@ test("a trackerless item with no onFail is a no-op, and labels nothing", async (
 import { applyRestart, applyFail, applyDone, FAIL_TAIL_LINES } from "../src/effects/monitor"
 import { memoryLock } from "../src/lock"
 
-function liveCtx(o: { account?: string | null; tail?: string } = {}) {
+function liveCtx(o: { account?: string | null; tail?: string; journalPath?: string } = {}) {
   const calls: any[][] = []
   const ctx = {
     workspace: {
       worktreeBase: "/b",
       repos: { web: "/r" },
+      journalPath: o.journalPath ?? join(mkdtempSync(join(tmpdir(), "al-j-")), "journal.md"),
       naming: { labels: { claim: "agent-wip", failed: "agent-failed", park: "needs-human", priority: [] }, mergeMethod: "squash" },
     },
     config: {
@@ -99,6 +103,7 @@ function liveCtx(o: { account?: string | null; tail?: string } = {}) {
       accounts: [{ id: "loop", provider: "codex", configDir: "~/.a", reserve: 0, agentKind: "codex", startArgs: ["--yolo"] }],
     },
     live: true,
+    now: new Date("2026-09-01T06:46:00Z"),
     sleep: async () => {},
     global: { accountFor: () => (o.account === undefined ? "loop" : o.account) },
     herdr: {
@@ -157,6 +162,30 @@ test("the default failure tombstones the item and posts the transcript tail", as
   const body = String(calls[2]![4])
   expect(body).toContain("```")
   expect(body).toContain("stack trace here")
+})
+
+// The label and the comment land on the item, which is the right place for a
+// human to read them and the wrong place to notice them: on 2026-09-01 six
+// builders failed inside seventeen minutes and the journal recorded none of it,
+// so reconstructing what happened meant the tick log and six workers'
+// transcripts. Every other outcome writes one line to the journal, and a
+// failure is the outcome most worth reading.
+test("the default failure writes its own journal line", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "al-journal-"))
+  const path = join(dir, "journal.md")
+  const { ctx } = liveCtx({ tail: "stack trace here", journalPath: path })
+  try {
+    await applyFail(ctx, job(), item, "r80")
+    const written = readFileSync(path, "utf8").trim().split("\n")
+    expect(written).toHaveLength(1)
+    // Job, key and where the verdict went, so the line stands on its own next
+    // to the worker-written ones around it.
+    expect(written[0]).toContain("FAIL review r80")
+    expect(written[0]).toContain("#80")
+    expect(written[0]).toContain("agent-failed")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("a job's own onFail replaces the default entirely", async () => {
