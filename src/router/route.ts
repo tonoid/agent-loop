@@ -14,26 +14,41 @@ export const BUILT_BY = /^built-by:\s*(\S+)\s*$/m
 
 // How old a recorded reading may be and still price an account the reader
 // cannot reach. The usage endpoint answers about five calls a minute per token
-// and shares that budget with every interactive agent on the box, so a healthy
-// account draws a 429 on a busy minute and the reader holds it for five. Ten
-// minutes covers that backoff and the retry after it, and a tick reads every
-// couple of minutes, so a reading this old is one or two ticks back rather
-// than a different afternoon. What it can be wrong by is bounded by what the
-// workers it priced could have spent meanwhile: on 2026-08-31 a session window
-// moved two points in half an hour under two workers, which is a fraction of a
-// point over ten minutes against a ceiling of 75. Past this, an account is not
+// and shares that budget with every consumer of it: each interactive session's
+// status line, each worker the loop starts, and the tick itself. A busy account
+// draws a 429, and the reader holds a 429 for five minutes on purpose, so one
+// unlucky probe costs five minutes and unlucky probes chain. Measured on one
+// box over an evening, on a token held by four sessions and two workers: gaps
+// of 10, 14, 20, 20 and 27 minutes between successful readings, and the account
+// unreadable for 151 of 210 minutes. Ten minutes rode out a single hold and not
+// a run of them, which is what benched an account with 93 percent of its week
+// left. Half an hour covers the runs actually seen. Past it an account is not
 // bursting, it is unreachable, and a stale number would hide that.
-export const STALE_USAGE_MS = 10 * 60_000
+export const STALE_USAGE_MS = 30 * 60_000
 
 // The reading to rank on when the live one did not arrive. Nothing is invented
 // here: these are readings this loop took and recorded, replayed against a
 // later clock, and windowSane still refuses one older than its own window.
 // Empty for a fresh account, which has no recorded reading by definition, and
 // for an account whose last reading is older than the bound.
-function staleWindows(ctx: Ctx, a: AccountConfig, usage: AccountUsage): Window[] {
+//
+// Aged forward by what the account could have spent since, because half an hour
+// is long enough for the number to matter near a ceiling, and the ceiling is
+// what stops a worker starting into a window that will refuse it mid-task. At
+// least one consumer even with no worker of ours in flight: an account nothing
+// is using does not drain a metering bucket, so a reading we cannot refresh is
+// itself evidence that something is spending. The rate is the same one the
+// budget prices workers with, so this errs the way that model errs and adds no
+// second opinion of its own.
+function staleWindows(ctx: Ctx, a: AccountConfig, usage: AccountUsage, workers: number): Window[] {
   if (usage.readable || usage.fresh) return []
   const windows = ctx.global.lastWindows(a.id, ctx.now.getTime() - STALE_USAGE_MS)
-  return windows.length > 0 && !checkWindows(windows, ctx.now) ? windows : []
+  if (windows.length === 0 || checkWindows(windows, ctx.now)) return []
+  return windows.map((w) => {
+    const minutes = (ctx.now.getTime() - w.observedAt.getTime()) / 60000
+    const rate = rateOf(ctx.global, a.provider, w.kind, ctx.config.workerRateSeed, w.windowMinutes)
+    return { ...w, percent: Math.min(100, w.percent + rate * Math.max(workers, 1) * minutes) }
+  })
 }
 
 function startOfUtcDay(now: Date): number {
@@ -149,7 +164,7 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     )
     const max = a.maxConcurrent ?? cfg.maxConcurrentPerAccount
     const have = inFlight.get(a.id) ?? 0
-    const stale = staleWindows(ctx, a, usage)
+    const stale = staleWindows(ctx, a, usage, have)
     let concurrency: number
     let why: string
 

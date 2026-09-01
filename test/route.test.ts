@@ -219,11 +219,51 @@ test("a stored reading past the stale bound rescues nothing", async () => {
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 10,
     resetsAt: new Date(NOW.getTime() + 200 * 60000),
-    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 20 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 35 * 60000),
   })
   expect(await chooseAccount(ctx, job(), item())).toEqual({
     ok: false, global: false, reason: "STARVED no eligible account",
   })
+})
+
+// Half an hour, because the refusals chain. A 429 is held for five minutes by
+// the reader, so an unlucky probe costs five, and on a token shared with four
+// interactive sessions and two workers the probes kept losing: gaps of 10, 14,
+// 20, 20 and 27 minutes between successful readings in one evening. Ten minutes
+// rode out one hold and not a run of them.
+test("a reading from twenty-five minutes ago still prices the account", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  global.recordUsage("loop", {
+    kind: "session", group: "session", percent: 10,
+    resetsAt: new Date(NOW.getTime() + 200 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 25 * 60000),
+  })
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: true, account: "loop" })
+})
+
+// What the widening costs is that the number is older, so it is aged forward by
+// what the account could have spent since. At least one consumer, even with no
+// worker of ours in flight: an account nothing is using does not drain a
+// metering bucket, so a reading we cannot refresh is evidence something is
+// spending. The same 84% is eligible read live and refused read from
+// twenty-five minutes ago, which is the whole point of the adjustment.
+test("a stale reading is aged forward by what the account could have spent", async () => {
+  const live = build({ accounts: [acct("loop")], usage: { loop: tight(84) } })
+  expect(await chooseAccount(live.ctx, job(), item())).toMatchObject({ ok: true })
+
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+  })
+  global.recordUsage("loop", {
+    kind: "session", group: "session", percent: 84,
+    resetsAt: new Date(NOW.getTime() + 200 * 60000),
+    windowMinutes: 300, observedAt: new Date(NOW.getTime() - 25 * 60000),
+  })
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
 })
 
 // A stale reading prices an account, it does not teach the fleet. The rate
