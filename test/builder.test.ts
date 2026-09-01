@@ -84,6 +84,36 @@ test("sweepOk waits for that pull request to be finished, not merely open", asyn
   expect(await p.sweepOk!(ctxFor({ prs: [pr(9, "build/b7", "MERGED"), pr(11, "build/b7")] }), "b7")).toBe(false)
 })
 
+// A builder that fails opens no pull request, so the predicate above has
+// nothing to find and answers false forever. Six worktrees accumulated that way
+// on one box in a day: the workers had run, labelled their issue agent-failed
+// for a human and exited, and the sweep held every one of them because a hold
+// never kills. The park and failed labels are the two states a human owns, and
+// a human owning the item is exactly when the machine should let go of the
+// worktree.
+test("sweepOk releases a worktree whose issue a human now owns", async () => {
+  const p = job()
+  const failed = ctxFor({ issues: [issue(7, ["agent-failed"])] })
+  const parked = ctxFor({ issues: [issue(7, ["needs-human"])] })
+  expect(await p.sweepOk!(failed, "b7")).toBe(true)
+  expect(await p.sweepOk!(parked, "b7")).toBe(true)
+})
+
+// The pull request still decides whenever there is one. A failed label on an
+// issue whose pull request is open is a reviewer's round that found something,
+// and tearing that worktree down destroys the branch the next round works in.
+test("an open pull request outranks the failed label", async () => {
+  const p = job()
+  const ctx = ctxFor({ issues: [issue(7, ["agent-failed"])], prs: [pr(9, "build/b7")] })
+  expect(await p.sweepOk!(ctx, "b7")).toBe(false)
+})
+
+// Neither a pull request nor a human-owned label: a worker that is still
+// working, which the hold exists for.
+test("sweepOk still holds a worktree with no pull request and no verdict", async () => {
+  expect(await job().sweepOk!(ctxFor({ issues: [issue(7)] }), "b7")).toBe(false)
+})
+
 test("admit throttles on review debt and says so", async () => {
   const deep = ctxFor({ prs: [pr(1, "build/b1"), pr(2, "build/b2"), pr(3, "build/b3")] })
   expect(await job({ reviewDebt: 3 }).admit!(deep)).toBe("review debt 3/3")

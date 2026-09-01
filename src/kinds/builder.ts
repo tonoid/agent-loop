@@ -111,9 +111,25 @@ export const builder: Kind = {
       // Not done: the worktree has to survive until the pull request is
       // finished, because the reviewer's rounds ask the builder's worker for
       // changes in it.
+      //
+      // With no pull request at all there is nothing to wait for, and a builder
+      // that fails opens none: it labels its issue for a human and exits. Read
+      // as "no pull request yet" that answered false forever, and a hold never
+      // kills, so six dead worktrees and their tabs accumulated on one box in a
+      // day while the log carried a HOLD line for each every two minutes. The
+      // park and failed labels are the two states a human owns, and a human
+      // owning the item is when the machine should let go. The pull request
+      // still decides whenever there is one: a failed label on an issue whose
+      // pull request is open is a review round that found something, and its
+      // worktree is where the next round works.
       async sweepOk(ctx, rawKey) {
         const pr = await prFor(ctx, rawKey)
-        return pr !== null && pr.state !== "OPEN"
+        if (pr !== null) return pr.state !== "OPEN"
+        const l = ctx.workspace.naming.labels
+        const owned = new Set([l.park, l.failed].filter(Boolean))
+        const number = Number(rawKey.replace(/^\D+/, ""))
+        const issue = (await issues(ctx, job, "all")).find((i) => i.number === number)
+        return issue !== undefined && issue.labels.some((name) => owned.has(name))
       },
 
       brief: (ctx, item) =>
