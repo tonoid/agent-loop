@@ -231,6 +231,12 @@ export interface Window {
 // too much of it, and the account needs one worker before it can be read.
 export type AccountUsage =
   | { readable: true; windows: Window[] }
-  | { readable: false; reason: string; fresh?: boolean }
+  // `transient` marks a failure of the metering endpoint rather than of the
+  // account: the endpoint was busy or briefly broken, and the account itself is
+  // fine. Only those may be priced on an older reading, because a stale usage
+  // number cannot rescue an account a worker cannot authenticate to. Opt-in on
+  // purpose: a new failure mode that forgets to set it costs a skipped tick,
+  // and the other default costs a spawned worker that cannot work.
+  | { readable: false; reason: string; fresh?: boolean; transient?: boolean }
 
 export type UsageReader = (a: AccountConfig, now: Date) => Promise<AccountUsage>

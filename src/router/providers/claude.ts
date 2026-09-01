@@ -104,6 +104,13 @@ export function writeCreds(configDir: string, creds: Creds): void {
 
 const no = (reason: string): AccountUsage => ({ readable: false, reason })
 
+// The endpoint was busy or briefly broken and the account is fine, so an older
+// reading may still price it. Distinct from every other failure here: missing
+// credentials and a refused refresh are facts about the account, and a worker
+// started on one of those meets "Invalid API key, please run /login" instead of
+// its brief.
+const busy = (reason: string): AccountUsage => ({ readable: false, reason, transient: true })
+
 // A window that has never started has nothing to reset, so a brand new login
 // answers 200 with no window carrying a resets_at. That is an account with no
 // usage yet, not a broken one, and the router admits one worker on it rather
@@ -150,8 +157,8 @@ export function makeClaudeReader(d: ClaudeDeps): UsageReader {
     // our behalf, and it says nothing about quota: an account measured at 3%
     // of its session and 39% of its week answers 429 on the fifth call in a
     // minute. Real exhaustion arrives as a 200 with the windows at 100%.
-    if (res.status === 429) return no("429 from the usage endpoint (burst limit, not quota)")
-    if (res.status !== 200) return no(`usage endpoint ${res.status}`)
+    if (res.status === 429) return busy("429 from the usage endpoint (burst limit, not quota)")
+    if (res.status !== 200) return busy(`usage endpoint ${res.status}`)
 
     const windows: Window[] = []
     for (const l of (res.body?.limits ?? []) as any[]) {

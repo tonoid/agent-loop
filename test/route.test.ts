@@ -168,7 +168,7 @@ test("a fresh account already running its one worker is not admitted again", asy
 test("an unreadable account stays out, and allowWhenUnreadable is the way back in", async () => {
   const out = build({
     accounts: [acct("loop")],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   expect(await chooseAccount(out.ctx, job(), item())).toMatchObject({ ok: false, global: false })
 
@@ -177,7 +177,7 @@ test("an unreadable account stays out, and allowWhenUnreadable is the way back i
   // account spent. The operator's opt-in decides now, as it does for grok.
   const back = build({
     accounts: [acct("loop", { allowWhenUnreadable: true })],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   expect(await chooseAccount(back.ctx, job(), item())).toMatchObject({ ok: true, account: "loop" })
 })
@@ -192,7 +192,7 @@ test("an unreadable account stays out, and allowWhenUnreadable is the way back i
 test("an unreadable account is priced on its last stored reading", async () => {
   const { ctx, global } = build({
     accounts: [acct("loop")],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 10,
@@ -214,7 +214,7 @@ test("an unreadable account is priced on its last stored reading", async () => {
 test("a stored reading past the stale bound rescues nothing", async () => {
   const { ctx, global } = build({
     accounts: [acct("loop")],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 10,
@@ -234,7 +234,7 @@ test("a stored reading past the stale bound rescues nothing", async () => {
 test("a reading from twenty-five minutes ago still prices the account", async () => {
   const { ctx, global } = build({
     accounts: [acct("loop")],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 10,
@@ -256,7 +256,7 @@ test("a stale reading is aged forward by what the account could have spent", asy
 
   const { ctx, global } = build({
     accounts: [acct("loop")],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 84,
@@ -266,13 +266,42 @@ test("a stale reading is aged forward by what the account could have spent", asy
   expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, global: false })
 })
 
+// The reason matters, not just the fact of being unreadable. On 2026-09-01 an
+// account's credentials file went missing for half an hour; the reading from
+// before it went kept the account eligible, and six builders spawned into it,
+// each hitting "Invalid API key, please run /login", failing, and labelling a
+// perfectly good issue agent-failed. A usage number cannot rescue an account a
+// worker cannot authenticate to. Only the metering endpoint being busy is
+// transient; everything else is a fact about the account.
+test("a stale reading rescues a busy endpoint, never a broken account", async () => {
+  const seed = (o: { reason: string; transient?: boolean }) => {
+    const b = build({ accounts: [acct("loop")], usage: { loop: { readable: false, ...o } } })
+    b.global.recordUsage("loop", {
+      kind: "session", group: "session", percent: 10,
+      resetsAt: new Date(NOW.getTime() + 200 * 60000),
+      windowMinutes: 300, observedAt: new Date(NOW.getTime() - 2 * 60000),
+    })
+    return b.ctx
+  }
+  const busy = seed({ reason: "429 from the usage endpoint", transient: true })
+  expect(await chooseAccount(busy, job(), item())).toMatchObject({ ok: true, account: "loop" })
+
+  // The two that produced doomed workers: no credentials to read, and a
+  // refresh the token endpoint refused.
+  const gone = seed({ reason: "no credentials in ~/.loop" })
+  expect(await chooseAccount(gone, job(), item())).toMatchObject({ ok: false, global: false })
+
+  const stale = seed({ reason: "refresh failed: Error: token endpoint 400" })
+  expect(await chooseAccount(stale, job(), item())).toMatchObject({ ok: false, global: false })
+})
+
 // A stale reading prices an account, it does not teach the fleet. The rate
 // EWMA is fed by the delta between two live readings, and a reading replayed
 // against a later clock is the same number at a different time: nothing spent.
 test("a stale reading still refuses an account whose window is spent", async () => {
   const { ctx, global } = build({
     accounts: [acct("loop", { reserve: 20 })],
-    usage: { loop: { readable: false, reason: "429 from the usage endpoint" } },
+    usage: { loop: { readable: false, reason: "429 from the usage endpoint", transient: true } },
   })
   global.recordUsage("loop", {
     kind: "session", group: "session", percent: 95,
