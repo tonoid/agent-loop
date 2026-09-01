@@ -211,14 +211,24 @@ export function liveClaudeDeps(live = false): ClaudeDeps {
       const j: any = await r.json()
       const next = {
         accessToken: String(j.access_token),
-        refreshToken: c.refreshToken,
+        // The response's own refresh token when it carries one, because the
+        // endpoint may rotate: it hands back a new one and invalidates the one
+        // that bought it. Keeping the old one and writing it back over the file
+        // locked an account out twice in two days, the next refresh answering
+        // `invalid_grant, Refresh token not found or invalid` with the stored
+        // expiry still 27 days away and only an interactive login able to
+        // recover it. Worse on an account a human also uses: their session
+        // refreshes, stores the new token, and this wrote the dead one back
+        // over it. A response with no refresh_token means the stored one is
+        // still live, so it has to survive rather than become undefined.
+        refreshToken: j.refresh_token ? String(j.refresh_token) : c.refreshToken,
         expiresAt: Date.now() + Number(j.expires_in ?? 0) * 1000,
         refreshTokenExpiresAt: c.refreshTokenExpiresAt,
       }
-      // A dry run keeps the refreshed token in memory: refresh tokens are not
-      // rotated, so the stored one keeps working and the file stays the live
-      // agent's to own. A live run writes it back, because an account nobody
-      // refreshes goes blind within a day.
+      // A dry run keeps the refreshed token in memory rather than writing it,
+      // so the file stays the live agent's to own. A live run writes it back,
+      // because an account nobody refreshes goes blind within a day, and
+      // because a rotated token that is never stored is a token thrown away.
       if (live) writeCreds(configDir, next)
       return next
     },

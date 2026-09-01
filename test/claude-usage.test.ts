@@ -1,7 +1,7 @@
 // test/claude-usage.test.ts
 import { test, expect } from "bun:test"
-import { makeClaudeReader, REFRESH_MARGIN_MS, usageCachePath, readUsageCache, writeUsageCache } from "../src/router/providers/claude"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { makeClaudeReader, liveClaudeDeps, REFRESH_MARGIN_MS, usageCachePath, readUsageCache, writeUsageCache } from "../src/router/providers/claude"
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ClaudeDeps, Creds } from "../src/router/providers/claude"
@@ -77,6 +77,64 @@ test("a 429 is merely unreadable: it is a burst limit, not a quota", async () =>
   const { d } = deps({ usage: [{ status: 429, body: null }] })
   const u = await makeClaudeReader(d)(acct(), NOW)
   expect(u).toEqual({ readable: false, reason: "429 from the usage endpoint (burst limit, not quota)" })
+})
+
+// The endpoint may hand back a new refresh token and invalidate the one that
+// bought it. This code kept the old one and wrote it back over the file, on the
+// assumption that refresh tokens are never rotated, so a rotated account locked
+// itself out: the next refresh answered `invalid_grant, Refresh token not found
+// or invalid` with the stored expiry still 27 days away, and only an
+// interactive login could recover it. Observed twice in two days on the account
+// a human and the loop both refresh.
+//
+// Against liveClaudeDeps and not the deps seam, because the discarding happened
+// below that seam: a test above it can only assert its own stub.
+test("a rotated refresh token is kept, not discarded for the one that bought it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "al-rotate-"))
+  writeFileSync(`${dir}/.credentials.json`, JSON.stringify({
+    claudeAiOauth: { accessToken: "at1", refreshToken: "rt1", expiresAt: 1 },
+  }))
+  const real = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ access_token: "at2", refresh_token: "rt2", expires_in: 3600 }),
+      { status: 200 })) as unknown as typeof fetch
+  try {
+    const d = liveClaudeDeps(true)
+    const next = await d.refresh(
+      { accessToken: "at1", refreshToken: "rt1", expiresAt: 1 },
+      "client",
+      dir,
+    )
+    expect(next.refreshToken).toBe("rt2")
+    const onDisk = JSON.parse(readFileSync(`${dir}/.credentials.json`, "utf8"))
+    expect(onDisk.claudeAiOauth.refreshToken).toBe("rt2")
+  } finally {
+    globalThis.fetch = real
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// A response without one means the token that bought it is still live, so the
+// stored one has to survive: overwriting it with undefined is the same lockout
+// from the other direction.
+test("a response carrying no refresh token leaves the stored one alone", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "al-rotate-"))
+  writeFileSync(`${dir}/.credentials.json`, JSON.stringify({
+    claudeAiOauth: { accessToken: "at1", refreshToken: "rt1", expiresAt: 1 },
+  }))
+  const real = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ access_token: "at2", expires_in: 3600 }), { status: 200 })) as unknown as typeof fetch
+  try {
+    const next = await liveClaudeDeps(true).refresh(
+      { accessToken: "at1", refreshToken: "rt1", expiresAt: 1 }, "client", dir,
+    )
+    expect(next.refreshToken).toBe("rt1")
+    expect(JSON.parse(readFileSync(`${dir}/.credentials.json`, "utf8")).claudeAiOauth.refreshToken).toBe("rt1")
+  } finally {
+    globalThis.fetch = real
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("the reader hands the config dir to getUsage so the answer can be shared", async () => {
