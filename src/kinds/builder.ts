@@ -4,6 +4,16 @@ import { issues, prs, unblocked, byPriority, newestByHead, humanOwned } from "./
 import { renderBrief } from "../brief"
 import { branchName } from "../engine/naming"
 
+// The one reading of a closed pull request, shared by guard(), done() and
+// sweepOk() because the three have to agree about it: whichever of them reads
+// it differently is the one that makes the loop spawn, release and sweep the
+// same issue every tick. Human-owned is not a retry: `agent-failed` on a pull
+// request is the monitor's tombstone and `needs-human` is a question nobody
+// answered, and re-picking either is the loop overruling the human it asked.
+function retriable(ctx: Ctx, pr: WorkItem): boolean {
+  return pr.state === "CLOSED" && !humanOwned(ctx, pr)
+}
+
 interface Options {
   base: string
   reviewDebt: number
@@ -97,15 +107,23 @@ export const builder: Kind = {
       // worktree the reviewer's rounds are still working in.
       guard: async (ctx, item) => {
         const pr = await prFor(ctx, keyFor(item))
-        // A closed, unmerged pull request is a legitimate retry.
-        return pr === null || pr.state === "CLOSED"
+        return pr === null || retriable(ctx, pr)
       },
 
       // The work is over when the pull request exists: what happens to it after
       // that belongs to the reviewer, and holding the claim would count this
       // issue against the builder's slots through every review round.
+      //
+      // Except for the one pull request guard() re-picks. This read "a pull
+      // request exists" until 2026-09-02, when a closed one made the two
+      // disagree: the retry was declared finished before its worker had done
+      // anything, the claim came off, and the next tick picked the same issue
+      // again. 41 workers on one issue in 82 minutes, the box's whole daily
+      // spawn budget, and the scheduled routines sharing the box missed their
+      // slots behind a cap they had not spent.
       async done(ctx, item) {
-        return (await prFor(ctx, keyFor(item))) !== null
+        const pr = await prFor(ctx, keyFor(item))
+        return pr !== null && !retriable(ctx, pr)
       },
 
       // Not done: the worktree has to survive until the pull request is
@@ -130,10 +148,18 @@ export const builder: Kind = {
         // will ever move it and both worktrees wait on a state change only a
         // human can cause: two pairs sat 19 and 21 hours that way, holding
         // 1.4GB of live worker processes between them.
-        if (pr !== null) return pr.state !== "OPEN" || humanOwned(ctx, pr)
+        if (pr !== null && !retriable(ctx, pr)) return pr.state !== "OPEN" || humanOwned(ctx, pr)
+        // No pull request, or the one guard() is going to try again: either way
+        // the worktree belongs to a run that is not finished. sweepIgnoresWorking
+        // is on for builders, so nothing else holds it, and a retry whose fresh
+        // worktree is deleted ninety seconds in works in a directory that no
+        // longer exists. The issue decides instead: a closed one is out of
+        // discover() and a human-owned one is a state only a human can change,
+        // so neither is ever picked up again and neither worktree is waiting
+        // for anything.
         const number = Number(rawKey.replace(/^\D+/, ""))
         const issue = (await issues(ctx, job, "all")).find((i) => i.number === number)
-        return issue !== undefined && humanOwned(ctx, issue)
+        return issue !== undefined && (issue.state !== "OPEN" || humanOwned(ctx, issue))
       },
 
       brief: (ctx, item) =>
