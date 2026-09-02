@@ -166,6 +166,40 @@ test("a closed unmerged pull request is a retry, and no pull request is a first 
   expect(await p.guard!(ctxFor(), issue(7))).toBe(true)
 })
 
+// The runaway of 2026-09-02, and the reason the three predicates share one
+// reading of a closed pull request. done() answered "a pull request exists" and
+// guard() answered "a closed one is a retry", so a retry lost its claim the tick
+// after it spawned and the next tick picked the same issue again: 41 workers on
+// one issue in 82 minutes, and the day's whole spawn budget with them.
+test("a retry is not finished the moment it spawns, or the same issue respawns every tick", async () => {
+  const p = job()
+  const closed = ctxFor({ prs: [pr(9, "build/b7", "CLOSED")] })
+  expect(await p.guard!(closed, issue(7))).toBe(true)
+  expect(await p.done(closed, issue(7))).toBe(false)
+})
+
+test("a human-owned closed pull request ends the run instead of retrying it", async () => {
+  const p = job()
+  for (const label of ["agent-failed", "needs-human"]) {
+    const ctx = ctxFor({ prs: [{ ...pr(9, "build/b7", "CLOSED"), labels: [label] }] })
+    expect(await p.guard!(ctx, issue(7))).toBe(false)
+    expect(await p.done(ctx, issue(7))).toBe(true)
+    expect(await p.sweepOk!(ctx, "b7")).toBe(true)
+  }
+})
+
+// sweepIgnoresWorking is on for builders, so this predicate is the only thing
+// between a retry and a worktree deleted out from under its worker.
+test("sweepOk holds the worktree a retry is going to work in", async () => {
+  const p = job()
+  const closed = pr(9, "build/b7", "CLOSED")
+  expect(await p.sweepOk!(ctxFor({ issues: [issue(7)], prs: [closed] }), "b7")).toBe(false)
+  const parked = ctxFor({ issues: [issue(7, ["needs-human"])], prs: [closed] })
+  expect(await p.sweepOk!(parked, "b7")).toBe(true)
+  const gone = ctxFor({ issues: [issue(7, [], "CLOSED")], prs: [closed] })
+  expect(await p.sweepOk!(gone, "b7")).toBe(true)
+})
+
 test("a pass-labelled pull request is not review debt, because the reviewer is done with it", async () => {
   const passed = { ...pr(2, "build/b2"), labels: ["reviewed"] }
   const ctx = ctxFor({ prs: [pr(1, "build/b1"), passed] })
