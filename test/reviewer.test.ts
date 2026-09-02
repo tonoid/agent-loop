@@ -126,6 +126,27 @@ test("under closing-issue identity sweepOk asks the issue, which the merge close
   expect(await p.sweepOk!(ctxFor({ issues: [issue(12, "CLOSED")] }), "r12")).toBe(true)
 })
 
+// The identity lookups above answer on the issue, and an issue stays open while
+// its pull request is tombstoned, so the reviewer held its worktree for a
+// verdict that would never come: the monitor labels the pull request on
+// failure, a failed pull request is out of discovery, and nothing else ever
+// touches it. Two of these sat 19 and 21 hours next to their builders.
+test("sweepOk releases a worktree whose pull request a human now owns", async () => {
+  const p = job({ identity: "closing-issue" })
+  const failed = { ...pr(80, { headRef: "build/b12" }), labels: ["agent-failed"] }
+  const ctx = ctxFor({ issues: [issue(12)], prs: [failed], view: { closingIssuesReferences: [{ number: 12 }] } })
+  expect(await p.sweepOk!(ctx, "r12")).toBe(true)
+})
+
+// Only that pull request's own key. A human-owned pull request elsewhere in the
+// repository must not sweep an unrelated review out from under a live round.
+test("another pull request's failed label sweeps nothing of this key's", async () => {
+  const p = job({ identity: "closing-issue" })
+  const other = { ...pr(80, { headRef: "build/b99" }), labels: ["agent-failed"] }
+  const ctx = ctxFor({ issues: [issue(12)], prs: [other], view: { closingIssuesReferences: [{ number: 99 }] } })
+  expect(await p.sweepOk!(ctx, "r12")).toBe(false)
+})
+
 test("under head-ref-issue identity sweepOk takes the newest pull request naming the issue", async () => {
   const p = job({ identity: "head-ref-issue" })
   const olderDone = pr(80, { headRef: "build/b12", state: "MERGED" })

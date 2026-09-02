@@ -1,6 +1,6 @@
 import type { Job, WorkItem, Ctx } from "../types"
 import type { Kind } from "./validate"
-import { issues, prs, unblocked, byPriority, newestByHead } from "./shared"
+import { issues, prs, unblocked, byPriority, newestByHead, humanOwned } from "./shared"
 import { renderBrief } from "../brief"
 import { branchName } from "../engine/naming"
 
@@ -124,12 +124,16 @@ export const builder: Kind = {
       // worktree is where the next round works.
       async sweepOk(ctx, rawKey) {
         const pr = await prFor(ctx, rawKey)
-        if (pr !== null) return pr.state !== "OPEN"
-        const l = ctx.workspace.naming.labels
-        const owned = new Set([l.park, l.failed].filter(Boolean))
+        // The label on the pull request itself, which is the monitor
+        // tombstoning it rather than a review round asking for changes. A
+        // failed pull request is out of the reviewer's discovery, so nothing
+        // will ever move it and both worktrees wait on a state change only a
+        // human can cause: two pairs sat 19 and 21 hours that way, holding
+        // 1.4GB of live worker processes between them.
+        if (pr !== null) return pr.state !== "OPEN" || humanOwned(ctx, pr)
         const number = Number(rawKey.replace(/^\D+/, ""))
         const issue = (await issues(ctx, job, "all")).find((i) => i.number === number)
-        return issue !== undefined && issue.labels.some((name) => owned.has(name))
+        return issue !== undefined && humanOwned(ctx, issue)
       },
 
       brief: (ctx, item) =>

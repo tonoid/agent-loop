@@ -102,10 +102,23 @@ test("sweepOk releases a worktree whose issue a human now owns", async () => {
 // The pull request still decides whenever there is one. A failed label on an
 // issue whose pull request is open is a reviewer's round that found something,
 // and tearing that worktree down destroys the branch the next round works in.
-test("an open pull request outranks the failed label", async () => {
+test("an open pull request outranks the failed label on its issue", async () => {
   const p = job()
   const ctx = ctxFor({ issues: [issue(7, ["agent-failed"])], prs: [pr(9, "build/b7")] })
   expect(await p.sweepOk!(ctx, "b7")).toBe(false)
+})
+
+// Unless the label is on the pull request itself, which is the monitor
+// tombstoning the review rather than a round asking for changes. A failed pull
+// request is out of the reviewer's discovery, so nothing will ever move it
+// again, and both worktrees waited on a state change only a human could cause:
+// two pairs sat 19 and 21 hours holding 1.4GB of live worker processes.
+test("sweepOk releases a worktree whose pull request a human now owns", async () => {
+  const p = job()
+  const failed = ctxFor({ prs: [{ ...pr(9, "build/b7"), labels: ["agent-failed"] }] })
+  const parked = ctxFor({ prs: [{ ...pr(9, "build/b7"), labels: ["needs-human"] }] })
+  expect(await p.sweepOk!(failed, "b7")).toBe(true)
+  expect(await p.sweepOk!(parked, "b7")).toBe(true)
 })
 
 // Neither a pull request nor a human-owned label: a worker that is still
