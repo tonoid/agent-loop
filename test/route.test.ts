@@ -383,6 +383,32 @@ test("the daily spawn cap stops the whole walk", async () => {
   expect(r.ok === false && r.reason).toContain("CAP")
 })
 
+test("a job that ignores the cap routes through a spent one", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: roomy() },
+    config: { maxSpawnsPerDay: 2 },
+  })
+  global.spawnAdd("loop", "acme", "review", "r1", new Date("2026-08-19T01:00:00Z"))
+  global.spawnAdd("loop", "acme", "review", "r2", new Date("2026-08-19T02:00:00Z"))
+  expect(await chooseAccount(ctx, job({ ignoresSpawnCap: true }), item()))
+    .toMatchObject({ ok: true, account: "loop" })
+})
+
+test("a job that ignores the cap also survives the reservation count", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: roomy() },
+    config: { maxSpawnsPerDay: 1 },
+  })
+  ;(ctx as any).live = true
+  global.reserve("main", "acme", "other", "x1", new Date("2026-08-19T08:00:00Z"), 5, Date.UTC(2026, 7, 19))
+  expect(await chooseAccount(ctx, job({ ignoresSpawnCap: true }), item()))
+    .toMatchObject({ ok: true, account: "loop" })
+  // Still counted, so the day's total reads true and the capped jobs see it.
+  expect(global.spawnsSince(Date.UTC(2026, 7, 19))).toBe(2)
+})
+
 test("low memory only blocks while something is in flight", async () => {
   const idle = build({ accounts: [acct("loop")], usage: { loop: roomy() }, memMb: 100 })
   expect(await chooseAccount(idle.ctx, job(), item())).toMatchObject({ ok: true })

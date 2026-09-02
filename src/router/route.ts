@@ -129,8 +129,13 @@ interface Ranked {
 export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<Route> {
   const cfg = ctx.config
 
+  // A job the cap does not apply to still spends the account's quota and still
+  // waits for a worker slot, so usageMax, the reserves and maxConcurrent are
+  // what pace it. Only the box-wide day counter is lifted.
+  const cap = p.ignoresSpawnCap ? Infinity : cfg.maxSpawnsPerDay
+
   const spawned = ctx.global.spawnsSince(startOfUtcDay(ctx.now))
-  if (spawned >= cfg.maxSpawnsPerDay) {
+  if (spawned >= cap) {
     return { ok: false, global: true, reason: `CAP ${spawned}/${cfg.maxSpawnsPerDay} spawns today` }
   }
 
@@ -248,7 +253,7 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     // Choose-and-reserve is one step: counting first and inserting afterwards
     // is the race the daily cap exists to survive.
     const key = await p.key(ctx, item)
-    if (!ctx.global.reserve(won.account.id, ctx.workspace.name, p.name, key, ctx.now, cfg.maxSpawnsPerDay, startOfUtcDay(ctx.now))) {
+    if (!ctx.global.reserve(won.account.id, ctx.workspace.name, p.name, key, ctx.now, cap, startOfUtcDay(ctx.now))) {
       return { ok: false, global: true, reason: `CAP ${cfg.maxSpawnsPerDay} spawns today, reservation refused` }
     }
   }
