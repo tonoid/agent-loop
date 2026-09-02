@@ -163,6 +163,13 @@ export interface Job {
   // account by headroom: the same job must run the same model wherever it lands.
   model?: string
   sweepIgnoresWorking?: boolean
+  // Exempt from maxSpawnsPerDay. The cap is a runaway-loop breaker sized for
+  // whichever workspace on the box actually loops, and a scheduled job that
+  // spawns a handful of times a day is not what it is aimed at: on 2026-09-02 a
+  // builder re-picking one issue every tick spent all 60 by 03:52 and the
+  // 04:15 content run never started. Spawns still count, so an exempt job is
+  // visible in the day's total and shortens the capped jobs' budget.
+  ignoresSpawnCap?: boolean
   deleteRemote?: boolean
   // Selectors: each matches an account by id or by provider.
   requires?: string[]

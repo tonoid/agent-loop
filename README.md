@@ -225,12 +225,22 @@ label until somebody notices.
 kind: routine
 repo: web
 order: 5
+ignoresSpawnCap: true     # a scheduled slot is not what the cap is aimed at
 brief: { extends: default/routine, append: ./brief.md }
 options:
   at: ["09:10", "21:10"]
   days: [mon, tue, wed, thu, fri]  # optional; every day when unset
   doneWhen: ~/reports/{{key}}.md   # the artifact that ends the occurrence
 ```
+
+`ignoresSpawnCap` exempts a job from `maxSpawnsPerDay`, the box-wide runaway
+breaker. Set it on the jobs that spawn a handful of times a day on a schedule:
+the cap is sized for whichever workspace on the box actually loops, and when
+one of those spends the day's budget in an hour, a routine that shares the box
+misses its slot for something it has nothing to do with. Exempt spawns are
+still counted, so they show in the day's total and shorten what the capped jobs
+have left. The account's own `reserve`, `usageMax` and `maxConcurrent` still
+pace an exempt job.
 
 Give a routine a `doneWhen` whenever its run produces one. Without it the only
 signal a routine has is its worktree disappearing, and that waits for the next
