@@ -47,3 +47,14 @@ export function newestByHead(items: WorkItem[], head: string): WorkItem | null {
   const mine = items.filter((i) => i.headRef === head)
   return mine.length ? mine.reduce((a, b) => (b.number > a.number ? b : a)) : null
 }
+
+// The two labels a human owns: the park is a question nobody answered, the
+// failed label is the monitor's tombstone. Either means no job will pick the
+// item up again, so nothing the loop does will ever change its state, and a
+// sweep predicate waiting on one waits forever. A human owning the item is
+// exactly when the machine should let go of the worktree.
+export function humanOwned(ctx: Ctx, item: WorkItem): boolean {
+  const l = ctx.workspace.naming.labels
+  const owned = [l.park, l.failed].filter(Boolean)
+  return item.labels.some((name) => owned.includes(name))
+}

@@ -1,6 +1,6 @@
 import type { Ctx, FilingConfig, Job, WorkItem } from "../types"
 import { type Kind, oneOf, unknownKey } from "./validate"
-import { issues, prs, unblocked } from "./shared"
+import { issues, prs, unblocked, humanOwned } from "./shared"
 import { renderBrief } from "../brief"
 import { filingBudget } from "../filing"
 import { repoOf } from "../engine/item"
@@ -173,6 +173,17 @@ export const reviewer: Kind = {
       // tab forever.
       async sweepOk(ctx, rawKey) {
         const number = numberOf(rawKey)
+        // Before the identity lookups, because those answer on the issue and an
+        // issue stays open while its own pull request is tombstoned: the
+        // monitor labels the pull request on failure, a labelled one is out of
+        // discovery, and the worktree then waits for a verdict nobody will ever
+        // give. Keyed through job.key so it holds under every identity, and
+        // only for pull requests actually carrying the label, which is a short
+        // list on any healthy day and empty on most.
+        for (const p of inScope(await prs(ctx, job, "all"))) {
+          if (p.state !== "OPEN" || !humanOwned(ctx, p)) continue
+          if ((await job.key(ctx, p)) === rawKey) return true
+        }
         if (o.identity === "closing-issue") {
           const issue = (await issues(ctx, job, "all")).find((i) => i.number === number)
           if (issue) return issue.state !== "OPEN"
