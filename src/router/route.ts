@@ -236,6 +236,39 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     })
   }
 
+  // Last resort for a job that must run. Every account is out of headroom under
+  // usageMax and its own reserve, which is the pacing model saying "wait for the
+  // window to roll". A scheduled job cannot wait: its occurrence is a slot, and a
+  // slot missed is work that never happens. email-digest was starved on 2263
+  // ticks across five consecutive days in August, 19 mailings to real customers
+  // that simply never went out, while the loop ticked normally and said so once
+  // every two minutes. So a flagged job spends the reserve rather than skip: the
+  // account with the most room left of what is left, still bounded by that
+  // account's own worker ceiling, because two workers where one fits is not a
+  // quota decision but an out-of-memory one.
+  if (ranked.length === 0 && p.ignoresReserve) {
+    for (const a of pool) {
+      const max = a.maxConcurrent ?? cfg.maxConcurrentPerAccount
+      const have = inFlight.get(a.id) ?? 0
+      if (have >= max) continue
+      const usage = await ctx.usage(a).catch((): AccountUsage => ({ readable: false, reason: "read failed" }))
+      // The worst window is what would refuse the spawn, so it is what ranks the
+      // account here too. An unreadable account sorts last and is still eligible:
+      // this is the pass that runs when the alternative is not running at all.
+      const spent = usage.readable ? Math.max(...usage.windows.map((w) => w.percent), 0) : 100
+      ranked.push({
+        account: a,
+        demoted: builder !== null && builder === a.id,
+        prefer: p.prefer?.findIndex((sel) => selects(a, sel)) ?? -1,
+        headroom: 100 - spent,
+        why: `no account had headroom, spending the reserve for a job that must run (${a.id} at ${spent}% of its worst window, ${have} in flight)`,
+      })
+    }
+    // prefer: -1 means "not preferred" in the loop above, but the sort reads a
+    // lower number as better, so normalize before it decides.
+    for (const r of ranked) if (r.prefer === -1) r.prefer = Number.MAX_SAFE_INTEGER
+  }
+
   if (ranked.length === 0) return { ok: false, global: false, reason: "STARVED no eligible account" }
 
   ranked.sort(

@@ -283,7 +283,7 @@ test("a wrong-typed engine field is reported the way every other field is", () =
   // "4" silently became 1 and "10" silently became 100, and both are
   // load-bearing: slots is the job's concurrency and order is the spawn walk.
   const { errors } = loadWorkspace(
-    tree({ build: 'kind: builder\nrepo: web\nslots: "4"\norder: "10"\ndistinctFrom: "yes"\nignoresSpawnCap: "yes"\n' }),
+    tree({ build: 'kind: builder\nrepo: web\nslots: "4"\norder: "10"\ndistinctFrom: "yes"\nignoresSpawnCap: "yes"\nignoresReserve: "yes"\n' }),
     opts(),
   )
   expect(errors).toEqual([
@@ -291,6 +291,7 @@ test("a wrong-typed engine field is reported the way every other field is", () =
     "build/job.yml: order must be a number",
     "build/job.yml: distinctFrom must be true or false",
     "build/job.yml: ignoresSpawnCap must be true or false",
+    "build/job.yml: ignoresReserve must be true or false",
   ])
 })
 
