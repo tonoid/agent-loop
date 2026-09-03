@@ -409,6 +409,37 @@ test("a job that ignores the cap also survives the reservation count", async () 
   expect(global.spawnsSince(Date.UTC(2026, 7, 19))).toBe(2)
 })
 
+// email-digest was starved on 2263 ticks across five consecutive days in August:
+// 19 mailings that never went out while the loop ticked normally throughout. A
+// scheduled slot is not delayed by a skip, it is cancelled.
+test("a must-run job spends the reserve when no account has headroom", async () => {
+  const { ctx } = build({ accounts: [acct("loop", { reserve: 50 }), acct("main", { reserve: 50 })], usage: { loop: tight(95), main: tight(60) } });
+  expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: false, reason: "STARVED no eligible account" });
+  const r = await chooseAccount(ctx, job({ ignoresReserve: true }), item());
+  // The least-spent account of the ones with none: main at 60 over loop at 95.
+  expect(r).toMatchObject({ ok: true, account: "main" });
+  expect(r.ok === true && r.reason).toContain("spending the reserve");
+});
+
+test("the last resort still respects the account's own worker ceiling", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop", { reserve: 50, maxConcurrent: 1 })],
+    usage: { loop: tight(95) },
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "working", paneId: "p1" }],
+  });
+  global.spawnAdd("loop", "acme", "review", "r80", new Date("2026-08-19T08:00:00Z"));
+  // One worker fits and one is already there: a second is a memory decision, not
+  // a quota one, so must-run does not buy it.
+  expect(await chooseAccount(ctx, job({ ignoresReserve: true }), item())).toMatchObject({ ok: false, reason: "STARVED no eligible account" });
+});
+
+test("a must-run job takes headroom the normal way when there is any", async () => {
+  const { ctx } = build({ accounts: [acct("loop"), acct("main")], usage: { loop: roomy(), main: tight(95) } });
+  const r = await chooseAccount(ctx, job({ ignoresReserve: true }), item());
+  expect(r).toMatchObject({ ok: true, account: "loop" });
+  expect(r.ok === true && r.reason).not.toContain("spending the reserve");
+});
+
 test("low memory only blocks while something is in flight", async () => {
   const idle = build({ accounts: [acct("loop")], usage: { loop: roomy() }, memMb: 100 })
   expect(await chooseAccount(idle.ctx, job(), item())).toMatchObject({ ok: true })

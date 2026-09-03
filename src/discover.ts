@@ -17,7 +17,7 @@ const NAMING_KEYS = ["labels", "mergeMethod"]
 const LABEL_KEYS = ["claim", "failed", "park", "priority"]
 // `options` is opaque to the loader and validated by the kind; everything else
 // here is engine-level and validated for every kind (spec 3.3).
-const JOB_KEYS = ["kind", "repo", "slots", "order", "model", "requires", "prefer", "distinctFrom", "ignoresSpawnCap", "brief", "options"]
+const JOB_KEYS = ["kind", "repo", "slots", "order", "model", "requires", "prefer", "distinctFrom", "ignoresSpawnCap", "ignoresReserve", "brief", "options"]
 
 export interface LoadOpts {
   kinds: Record<string, Kind>
@@ -185,6 +185,9 @@ function loadJob(
   if (raw.ignoresSpawnCap !== undefined && typeof raw.ignoresSpawnCap !== "boolean") {
     errs.push(`${at}: ignoresSpawnCap must be true or false`)
   }
+  if (raw.ignoresReserve !== undefined && typeof raw.ignoresReserve !== "boolean") {
+    errs.push(`${at}: ignoresReserve must be true or false`)
+  }
   if (raw.model !== undefined && (typeof raw.model !== "string" || !raw.model)) {
     errs.push(`${at}: model must be the agent's own model name, like opus or sonnet`)
   }
@@ -221,6 +224,7 @@ function loadJob(
     prefer: prefer.length ? prefer : undefined,
     distinctFrom: raw.distinctFrom === true ? true : built.distinctFrom,
     ignoresSpawnCap: raw.ignoresSpawnCap === true ? true : built.ignoresSpawnCap,
+    ignoresReserve: raw.ignoresReserve === true ? true : built.ignoresReserve,
   }
 }
 

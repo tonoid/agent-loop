@@ -170,6 +170,13 @@ export interface Job {
   // 04:15 content run never started. Spawns still count, so an exempt job is
   // visible in the day's total and shortens the capped jobs' budget.
   ignoresSpawnCap?: boolean
+  // Spend the account reserve rather than skip. Only when no account has
+  // headroom at all, so the reserve still holds whenever the pacing model has
+  // any room to give: this is the difference between a job that waits for the
+  // window to roll and one whose slot is simply lost. For scheduled work with
+  // an outside consumer (a mailing, a daily run), where skipping is not a
+  // delay, it is a cancellation.
+  ignoresReserve?: boolean
   deleteRemote?: boolean
   // Selectors: each matches an account by id or by provider.
   requires?: string[]

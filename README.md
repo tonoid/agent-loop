@@ -226,6 +226,7 @@ kind: routine
 repo: web
 order: 5
 ignoresSpawnCap: true     # a scheduled slot is not what the cap is aimed at
+ignoresReserve: true      # ...and neither is the reserve, when the slot is the work
 brief: { extends: default/routine, append: ./brief.md }
 options:
   at: ["09:10", "21:10"]
@@ -241,6 +242,17 @@ misses its slot for something it has nothing to do with. Exempt spawns are
 still counted, so they show in the day's total and shorten what the capped jobs
 have left. The account's own `reserve`, `usageMax` and `maxConcurrent` still
 pace an exempt job.
+
+`ignoresReserve` is the same argument one layer down. The account `reserve` and
+`usageMax` pace the loop by making it wait for a window to roll, which is the
+right answer for a queue and the wrong one for a clock: a scheduled occurrence
+that waits long enough is not delayed, it is cancelled. On this box a digest job
+was starved on 2263 consecutive ticks across five days, 19 mailings that never
+went out while the loop ticked normally and logged the refusal every two
+minutes. A job with this set spends the reserve rather than skip, and only when
+no account has headroom at all, so the reserve still holds whenever the pacing
+model has any room to give. The account's own worker ceiling still applies:
+running two workers where one fits is a memory decision, not a quota one.
 
 Give a routine a `doneWhen` whenever its run produces one. Without it the only
 signal a routine has is its worktree disappearing, and that waits for the next
