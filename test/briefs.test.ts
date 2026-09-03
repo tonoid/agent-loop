@@ -46,6 +46,18 @@ test("the fences survive in every role, with every optional section loaded", () 
   }
 })
 
+// The example lines are the whole point of the section, and a {{worktree}} that
+// renders as a literal would teach every worker the wrong path. It reaches all
+// three roles because a blocked worker costs the same whatever it was doing.
+test("every role tells the worker to write absolute paths, with a worked example", () => {
+  for (const role of ROLES) {
+    const raw = loadBrief({ extends: role, optional: OPTIONALS })
+    expect({ role, said: raw.includes("Never open a command\nwith `cd`") }).toEqual({ role, said: true })
+    const text = render(raw, VARS)
+    expect(text).toContain(`grep -n "thing" -A 20 ${VARS.worktree}/apps/web/lib/x.ts`)
+  }
+})
+
 test("the push fence and the screenshots section name the same exception", () => {
   const core = loadBrief({})
   expect(core).toContain("{{assetBranch}}` is an exception only where a section below grants it")
