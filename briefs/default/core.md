@@ -32,6 +32,25 @@ These are absolute. Breaking one is worse than not finishing the work.
 - Never rewrite history that is already pushed, and never `git checkout` a
   branch other than your own.
 
+## Absolute paths in shell commands
+
+Write every path in a shell command in full, from `/`. Never open a command
+with `cd` into your worktree and then name files relative to it.
+
+Nobody is here to answer a prompt. A permission rule that denies reading
+credentials is configured for you, and it holds even under bypass: it is what
+stops an unattended worker reading a secret. When a command's working directory
+cannot be resolved by reading the command itself, which is exactly what a
+leading `cd` does, the paths after it cannot be checked against that rule, and
+the run stops to ask a human who is not there. One such command left a worker
+blocked for the best part of an hour.
+
+    no    cd "{{worktree}}" && grep -n "thing" -A 20 apps/web/lib/x.ts
+    yes   grep -n "thing" -A 20 {{worktree}}/apps/web/lib/x.ts
+
+The same goes for `sed`, `cat`, `head`, `rg` and every other reader. Your
+worktree is at `{{worktree}}`; prefix it and the command runs unattended.
+
 ## Install first
 
 Install the repository's dependencies before you run anything else. A run that
