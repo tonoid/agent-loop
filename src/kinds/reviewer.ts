@@ -186,7 +186,10 @@ export const reviewer: Kind = {
         }
         if (o.identity === "closing-issue") {
           const issue = (await issues(ctx, job, "all")).find((i) => i.number === number)
-          if (issue) return issue.state !== "OPEN"
+          // Human-owned is the builder's rule too: a parked issue is a state
+          // only a human can change, and r447 held its worktree 41 hours
+          // behind one on 2026-09-06 waiting for a close that never comes.
+          if (issue) return issue.state !== "OPEN" || humanOwned(ctx, issue)
         }
         if (o.identity === "head-ref-issue") {
           const all = await prs(ctx, job, "all")
