@@ -22,7 +22,7 @@ function job(options: Record<string, unknown> = {}) {
   return builder.build({ name: "build", dir: "/j/build", repo: "web", options: value })
 }
 
-function ctxFor(o: { issues?: WorkItem[]; prs?: WorkItem[] } = {}): Ctx {
+function ctxFor(o: { issues?: WorkItem[]; prs?: WorkItem[]; live?: boolean; labelled?: unknown[] } = {}): Ctx {
   return makeCtx({
     workspace: {
       name: "acme", dir: "/w", journalPath: "/j/journal.md",
@@ -32,12 +32,13 @@ function ctxFor(o: { issues?: WorkItem[]; prs?: WorkItem[] } = {}): Ctx {
     },
     config: { accounts: [] } as any,
     now: new Date("2026-08-19T09:00:00Z"),
-    live: false,
+    live: o.live ?? false,
     sleep: async () => {},
     lock: memoryLock(),
     gh: {
       issueList: async () => o.issues ?? [],
       prList: async () => o.prs ?? [],
+      label: async (...a: unknown[]) => { o.labelled?.push(a) },
     } as any,
     gitFor: () => ({ remoteSlug: async () => "acme/web" }) as any,
     herdr: {} as any,
@@ -185,6 +186,24 @@ test("a human-owned closed pull request ends the run instead of retrying it", as
     expect(await p.guard!(ctx, issue(7))).toBe(false)
     expect(await p.done(ctx, issue(7))).toBe(true)
     expect(await p.sweepOk!(ctx, "b7")).toBe(true)
+  }
+})
+
+// The label that ends the run sits on a closed pull request, which no backlog
+// view shows, so until 2026-09-06 the issue looked pickable forever and the
+// guard skipped it in silence on every tick: six issues sat that way.
+test("a human-owned closed pull request labels its issue, so the backlog says why it is skipped", async () => {
+  const p = job()
+  for (const label of ["agent-failed", "needs-human"]) {
+    const labelled: unknown[] = []
+    const ctx = ctxFor({ live: true, labelled, prs: [{ ...pr(9, "build/b7", "CLOSED"), labels: [label] }] })
+    expect(await p.guard!(ctx, issue(7))).toBe(false)
+    expect(labelled).toEqual([["acme/web", "issue", 7, { add: [label] }]])
+    // Already mirrored, or a dry run: no write.
+    labelled.length = 0
+    expect(await p.guard!(ctx, issue(7, [label]))).toBe(false)
+    expect(await p.guard!(ctxFor({ labelled, prs: [{ ...pr(9, "build/b7", "CLOSED"), labels: [label] }] }), issue(7))).toBe(false)
+    expect(labelled).toEqual([])
   }
 })
 

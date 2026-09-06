@@ -124,6 +124,8 @@ test("under closing-issue identity sweepOk asks the issue, which the merge close
   const p = job({ identity: "closing-issue" })
   expect(await p.sweepOk!(ctxFor({ issues: [issue(12)] }), "r12")).toBe(false)
   expect(await p.sweepOk!(ctxFor({ issues: [issue(12, "CLOSED")] }), "r12")).toBe(true)
+  // A parked issue stays open and nothing the loop does will close it.
+  expect(await p.sweepOk!(ctxFor({ issues: [{ ...issue(12), labels: ["needs-human"] }] }), "r12")).toBe(true)
 })
 
 // The identity lookups above answer on the issue, and an issue stays open while
