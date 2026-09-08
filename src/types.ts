@@ -183,6 +183,15 @@ export interface Job {
   // an outside consumer (a mailing, a daily run), where skipping is not a
   // delay, it is a cancellation.
   ignoresReserve?: boolean
+  // Run through a pacing pause, but never through a full account. Pacing
+  // spreads a window's ceiling evenly and waits whenever the account is ahead
+  // of that line, which is right for work that can be done later and wrong for
+  // the one job the rest of the queue is waiting on: a reviewer that cannot run
+  // is what makes a builder's review debt permanent, so a 0.4-point overshoot
+  // idled the whole maplista lane for 45 minutes on 2026-09-08. It takes one
+  // worker, not the account's clamp, and only while the points left still pay
+  // for a run, so usageMax and the reserve both still hold.
+  ignoresPace?: boolean
   deleteRemote?: boolean
   // Selectors: each matches an account by id or by provider.
   requires?: string[]

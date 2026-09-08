@@ -544,3 +544,57 @@ test("a worker under another workspace still counts against the account's concur
   global.spawnAdd("loop", "other", "build", "b7", new Date("2026-08-19T08:00:00Z"))
   expect(await chooseAccount(ctx, job(), item())).toMatchObject({ ok: true, account: "main" })
 })
+
+// Pacing waits whenever an account is ahead of its line, which is right for
+// work that can be done later and wrong for the job the rest of the queue is
+// waiting on: a reviewer that cannot run makes a builder's review debt
+// permanent, and on 2026-09-08 a 0.4-point overshoot idled the maplista lane
+// for 45 minutes with two pull requests sitting unreviewed.
+const paced = (): AccountUsage => ({
+  readable: true,
+  windows: [{
+    kind: "weekly_all", group: "g", percent: 40,
+    resetsAt: new Date(NOW.getTime() + 9080 * 60000),
+    windowMinutes: 10080, observedAt: NOW,
+  } satisfies Window],
+})
+
+test("a paced-out account refuses an ordinary job", async () => {
+  const { ctx } = build({ accounts: [acct("loop")], usage: { loop: paced() } })
+  expect(await chooseAccount(ctx, job(), item()))
+    .toMatchObject({ ok: false, reason: "STARVED no eligible account" })
+})
+
+test("ignoresPace takes one worker through the pause and says so", async () => {
+  const { ctx } = build({ accounts: [acct("loop")], usage: { loop: paced() } })
+  const out = await chooseAccount(ctx, job({ ignoresPace: true }), item())
+  expect(out).toMatchObject({ ok: true, account: "loop" })
+  expect(out.ok && out.reason).toContain("one worker through the pause")
+})
+
+test("ignoresPace is one worker, not the account's clamp", async () => {
+  const { ctx, global } = build({
+    accounts: [acct("loop")],
+    usage: { loop: paced() },
+    agents: [{ cwd: `${BASE}/wt-review-r80-2fa-login`, status: "working", paneId: "p1" }],
+  })
+  global.spawnAdd("loop", "acme", "review", "r80", new Date("2026-08-19T08:00:00Z"))
+  expect(await chooseAccount(ctx, job({ ignoresPace: true }), item()))
+    .toMatchObject({ ok: false, reason: "STARVED no eligible account" })
+})
+
+test("ignoresPace never runs through an account that is actually full", async () => {
+  // Half a point left of the 90 ceiling on a five-hour window, where a run
+  // costs one: ahead of the line and out of quota, so the flag does not apply.
+  const full = (): AccountUsage => ({
+    readable: true,
+    windows: [{
+      kind: "session", group: "g", percent: 89.5,
+      resetsAt: new Date(NOW.getTime() + 30 * 60000),
+      windowMinutes: 300, observedAt: NOW,
+    } satisfies Window],
+  })
+  const { ctx } = build({ accounts: [acct("loop")], usage: { loop: full() } })
+  expect(await chooseAccount(ctx, job({ ignoresPace: true }), item()))
+    .toMatchObject({ ok: false, reason: "STARVED no eligible account" })
+})

@@ -24,6 +24,11 @@ export interface BudgetOut {
   concurrency: number
   limiting: string
   detail: string
+  // A zero that is the clock talking rather than the quota: the account is
+  // ahead of its line, but the points left still pay for a run. It clears on
+  // its own within the hour, so a job that unblocks others can be let through
+  // it, while a zero without this flag means there is nothing left to spend.
+  paused: boolean
 }
 
 // How much working time a human still has inside this window, in weekday
@@ -100,9 +105,10 @@ export function concurrencyFor(i: BudgetIn): BudgetOut {
         concurrency,
         limiting: w.kind,
         detail: `${w.percent.toFixed(1)}% of ${ceiling.toFixed(1)}, line ${line.toFixed(1)}, with ${Math.round(minutesToReset)}m left`,
+        paused: concurrency === 0 && w.percent > line && affordable >= 1,
       }
     }
   }
 
-  return best ?? { concurrency: 0, limiting: "none", detail: "no windows" }
+  return best ?? { concurrency: 0, limiting: "none", detail: "no windows", paused: false }
 }

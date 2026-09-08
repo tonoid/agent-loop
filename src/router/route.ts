@@ -180,6 +180,7 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
     const stale = staleWindows(ctx, a, usage, have)
     let concurrency: number
     let why: string
+    let paused = false
 
     if (!usage.readable && stale.length === 0) {
       // Unreadable is ineligible, not "usable but ranked last": the last-resort
@@ -218,14 +219,19 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
         rateFor: (w) => rateOf(ctx.global, a.provider, w.kind, cfg.workerRateSeed, w.windowMinutes),
       })
       concurrency = b.concurrency
+      // The clock is what refuses here, not the quota, and it clears within the
+      // hour. A job the rest of the queue waits on takes one worker through it.
+      if (b.paused && p.ignoresPace && have < 1) paused = true
       const age = Math.round((ctx.now.getTime() - windows[0]!.observedAt.getTime()) / 60000)
       // The reason line is what an operator reads after a STARVED run turns
       // into a SPAWN, so a decision taken on an old number says so and says
       // which refusal made it old.
       const from = usage.readable ? "" : ` (stale by ${age}m, ${usage.reason})`
       why = `${b.limiting} ${b.detail} -> ${concurrency} workers, ${have} in flight${from}`
+      if (paused) why = `${why}, one worker through the pause`
     }
 
+    if (paused) concurrency = 1
     if (concurrency <= have) continue
     const preferIdx = p.prefer?.findIndex((s) => selects(a, s)) ?? -1
     ranked.push({

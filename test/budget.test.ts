@@ -139,3 +139,15 @@ test("the per-weekday reserve widens the flat one and never shrinks it", () => {
   // Unset is the old flat behaviour exactly.
   expect(at({ reserve: 40 }).detail).toContain("of 60")
 })
+
+// The two zeros are not the same refusal: one clears with the clock, the other
+// needs the window to roll.
+test("a zero from the line is flagged paused, a zero from the ceiling is not", () => {
+  // 70 spent against a line of 9: ahead, and 20 points still pay for a run.
+  expect(concurrencyFor(input([w("session", 70, 9080, 10080)])).paused).toBe(true)
+  // 89.5 spent of a 90 ceiling: ahead of the line too, but a 20-minute run
+  // costs 1 point and there is half of one left, so this is the quota talking.
+  expect(concurrencyFor(input([w("session", 89.5, 9080, 10080)])).paused).toBe(false)
+  // Not a zero at all.
+  expect(concurrencyFor(input([w("session", 10, 200)])).paused).toBe(false)
+})
