@@ -18,6 +18,7 @@ export function renderDecision(d: Decision, live = false): string {
       // OVERDUE is a held worktree with a notification sent about it, so it
       // reads as its own verb and appears once, not every tick like HOLD.
       if (d.action === "overdue") return `OVERDUE ${d.job} ${d.worktree} (${d.reason})`
+      if (d.action === "reap") return `${would("reap")} ${d.job} ${d.worktree} (${d.reason})`
       return `HOLD ${d.job} ${d.worktree} (${d.reason})`
     case "monitor":
       if (d.action === "busy") return `BUSY ${d.job} ${d.key} (${d.reason})`

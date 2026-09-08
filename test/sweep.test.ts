@@ -18,6 +18,9 @@ function harness(opts: {
   live?: boolean
   marks?: [string, string][]
   spawnedAgeMin?: number
+  panes?: { cwd: string; paneId: string; tabId: string }[]
+  staleAgentMin?: number
+  staleAgeMin?: number
 }) {
   const log: Decision[] = []
   const removed: string[] = []
@@ -25,6 +28,11 @@ function harness(opts: {
   const marks = openState(":memory:")
   for (const [key, mark] of opts.marks ?? []) marks.set("review", key, mark)
   if (opts.spawnedAgeMin !== undefined) marks.backdate("review", "80", "spawned", opts.spawnedAgeMin)
+  if (opts.staleAgeMin !== undefined) {
+    // backdate moves an existing row, so the mark has to be there first.
+    marks.set("review", "r80", "stale")
+    marks.backdate("review", "r80", "stale", opts.staleAgeMin)
+  }
   const ctx = makeCtx({
     workspace: {
       name: "acme", dir: "/w", journalPath: "/w/journal.md",
@@ -32,7 +40,7 @@ function harness(opts: {
       naming: { labels: { claim: "agent-wip", failed: "agent-failed", park: "needs-human", priority: [] }, mergeMethod: "squash" },
       jobs: [],
     },
-    config: { holdTimeoutMin: 180 } as any,
+    config: { holdTimeoutMin: 180, staleAgentMin: opts.staleAgentMin ?? 30 } as any,
     now: new Date("2026-08-19T09:00:00Z"),
     live: opts.live ?? false,
     sleep: async () => {},
@@ -48,7 +56,8 @@ function harness(opts: {
     }) as any,
     herdr: {
       agents: async () => opts.agents ?? [],
-      panes: async () => [],
+      panes: async () => opts.panes ?? [],
+      tabClose: async (id: string) => { calls.push(["tabClose", id]) },
       protocol: async () => 19,
       notify: async (title: string, body: string) => { calls.push(["notify", title, body]) },
     } as any,
@@ -267,4 +276,95 @@ test("a worktree with no spawned mark holds without a ping", async () => {
   })
   expect((await sweepJob(h.ctx, h.p))[0]!).toMatchObject({ action: "hold" })
   expect(h.calls.filter((c) => c[0] === "notify")).toEqual([])
+})
+
+// A finished worker that never exits counts against its account for as long as
+// the worktree waits on sweepOk, which starved the maplista lane twice on
+// 2026-09-07. The tab closes; the worktree stays, because sweepOk still owns it.
+test("an idle agent in a held worktree is reaped once it goes stale", async () => {
+  const { ctx, p, log, calls } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "idle", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => false,
+    staleAgeMin: 31,
+    live: true,
+  })
+  const out = await sweepJob(ctx, p)
+  expect(out[0]!).toMatchObject({ action: "reap", reason: "agent idle 31m >= 30m, closing the tab" })
+  expect(out[1]!).toMatchObject({ action: "hold", reason: "sweepOk(r80) false" })
+  expect(calls).toEqual([["tabClose", "w1:t1"]])
+  expect(log).toEqual([])
+})
+
+test("the first sighting of an idle agent only starts the clock", async () => {
+  const { ctx, p, calls } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "idle", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => false,
+    live: true,
+  })
+  const out = await sweepJob(ctx, p)
+  expect(out.map((d: any) => d.action)).toEqual(["hold"])
+  expect(calls).toEqual([])
+  // The second tick, still inside the window, must not reap either.
+  expect((await sweepJob(ctx, p)).map((d: any) => d.action)).toEqual(["hold"])
+  expect(calls).toEqual([])
+})
+
+test("a working agent is never reaped, however long it has been there", async () => {
+  const { ctx, p, calls } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "working", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => false,
+    staleAgeMin: 600,
+    live: true,
+  })
+  const out = await sweepJob(ctx, p)
+  expect(out.map((d: any) => d.action)).toEqual(["hold"])
+  expect(out[0]!).toMatchObject({ reason: "agent working" })
+  expect(calls).toEqual([])
+})
+
+test("a blocked agent is left for the human it is waiting on", async () => {
+  const { ctx, p, calls } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "blocked", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => false,
+    staleAgeMin: 600,
+    live: true,
+  })
+  expect((await sweepJob(ctx, p)).map((d: any) => d.action)).toEqual(["hold"])
+  expect(calls).toEqual([])
+})
+
+test("staleAgentMin 0 turns the reaper off", async () => {
+  const { ctx, p, calls } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "idle", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => false,
+    staleAgentMin: 0,
+    staleAgeMin: 600,
+    live: true,
+  })
+  expect((await sweepJob(ctx, p)).map((d: any) => d.action)).toEqual(["hold"])
+  expect(calls).toEqual([])
+})
+
+test("a reaped worktree is still swept normally once sweepOk turns true", async () => {
+  const { ctx, p, removed } = harness({
+    worktrees: [{ path: `${BASE}/wt-review-r80`, branch: "review/r80" }],
+    agents: [{ cwd: `${BASE}/wt-review-r80`, status: "idle", paneId: "w1:p1" }],
+    panes: [{ cwd: `${BASE}/wt-review-r80`, paneId: "w1:p1", tabId: "w1:t1" }],
+    sweepOk: () => true,
+    staleAgeMin: 600,
+    live: true,
+  })
+  const out = await sweepJob(ctx, p)
+  expect(out[0]!).toMatchObject({ action: "clean" })
+  expect(removed).toEqual([`${BASE}/wt-review-r80`])
 })

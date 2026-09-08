@@ -3,6 +3,7 @@ import type { Kind } from "./validate"
 import { issues, prs, unblocked, byPriority, newestByHead, humanOwned } from "./shared"
 import { renderBrief } from "../brief"
 import { branchName } from "../engine/naming"
+import { repoOf, itemKind } from "../engine/item"
 
 // The one reading of a closed pull request, shared by guard(), done() and
 // sweepOk() because the three have to agree about it: whichever of them reads
@@ -105,9 +106,23 @@ export const builder: Kind = {
       // issue stays open until the merge closes it, so without this the next
       // tick re-picks the issue and the spawn's pre-clean destroys the
       // worktree the reviewer's rounds are still working in.
+      //
+      // A human-owned closed pull request is the other answer, and until
+      // 2026-09-06 it was a silent one: the park or failed label sat on a
+      // closed pull request, which no backlog view shows, while the issue kept
+      // its plain labels and looked pickable. Six issues sat that way (#219,
+      // #292, #415, #447, #551, #555), skipped here on every tick with nothing
+      // in the log and nothing on the issue. Mirroring the label onto the issue
+      // makes the backlog say what the loop knows: unblocked() then drops it
+      // from discover(), sweepOk() lets its worktrees go, and a human sees it
+      // in the same list as every other parked item.
       guard: async (ctx, item) => {
         const pr = await prFor(ctx, keyFor(item))
-        return pr === null || retriable(ctx, pr)
+        if (pr === null || retriable(ctx, pr)) return true
+        const l = ctx.workspace.naming.labels
+        const add = [l.park, l.failed].filter((x) => pr.labels.includes(x) && !item.labels.includes(x))
+        if (add.length && ctx.live) await ctx.gh.label(repoOf(item), itemKind(item), item.number, { add })
+        return false
       },
 
       // The work is over when the pull request exists: what happens to it after

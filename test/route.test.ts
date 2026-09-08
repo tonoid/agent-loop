@@ -71,6 +71,7 @@ function build(o: {
     maxSpawnsPerDay: 200,
     blockedTimeoutMin: 180,
     holdTimeoutMin: 180,
+    staleAgentMin: 30,
     workerRateSeed: 0.05,
     workspaces: [],
     ...o.config,
