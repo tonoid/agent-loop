@@ -12,7 +12,8 @@ const KNOWN_PROVIDERS: Provider[] = ["claude", "codex", "grok"]
 // this at the commit that broke it (spec 3.5).
 const CONFIG_KEYS = [
   "accounts", "workspaces", "maxConcurrentPerAccount", "minFreeMb", "usageMax",
-  "releaseBefore", "maxSpawnsPerDay", "blockedTimeoutMin", "holdTimeoutMin", "workerRateSeed",
+  "releaseBefore", "maxSpawnsPerDay", "blockedTimeoutMin", "holdTimeoutMin", "staleAgentMin",
+  "workerRateSeed",
 ]
 const ACCOUNT_KEYS = [
   "id", "provider", "configDir", "reserve", "reservePerWeekday", "weekendWeight", "soleConsumer", "maxConcurrent", "allowWhenUnreadable",
@@ -32,6 +33,11 @@ export const DEFAULTS = {
   // reason about, and a job whose runs legitimately outlast it is the reason to
   // make this per-job rather than to raise it for the whole box.
   holdTimeoutMin: 180,
+  // A finished worker that never exits is invisible to the monitor, because
+  // done() has already taken its claim away. Thirty minutes is long enough
+  // that a worker still writing its last comment is never cut off, and short
+  // enough that a lane does not spend a night starved behind it.
+  staleAgentMin: 30,
   workerRateSeed: 0.35,
 } as const
 
@@ -197,6 +203,7 @@ export function parseConfig(text: string): { config: Config; errors: string[] } 
       maxSpawnsPerDay: num(raw.maxSpawnsPerDay, "maxSpawnsPerDay", DEFAULTS.maxSpawnsPerDay, errs),
       blockedTimeoutMin: num(raw.blockedTimeoutMin, "blockedTimeoutMin", DEFAULTS.blockedTimeoutMin, errs),
       holdTimeoutMin: num(raw.holdTimeoutMin, "holdTimeoutMin", DEFAULTS.holdTimeoutMin, errs),
+      staleAgentMin: num(raw.staleAgentMin, "staleAgentMin", DEFAULTS.staleAgentMin, errs),
       workerRateSeed,
     },
     errors: errs,

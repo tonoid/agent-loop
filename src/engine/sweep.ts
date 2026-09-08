@@ -1,6 +1,7 @@
-import type { Ctx, Job, Decision, WorkItem } from "../types"
+import type { Ctx, Job, Decision, WorkItem, AgentStatus } from "../types"
+import type { Worktree } from "../adapters/git"
 import { owns, keyOf, matchesCwd } from "./naming"
-import { applySweep } from "../effects/sweep"
+import { applySweep, applyReap } from "../effects/sweep"
 import { notifyOverdue } from "../overdue"
 import { auditFiling } from "../filing"
 import { appendJournal } from "../journal"
@@ -23,6 +24,41 @@ async function isFinished(ctx: Ctx, p: Job, rawKey: string): Promise<boolean> {
   return p.done(ctx, synthetic)
 }
 
+// An agent in one of these has nothing left to run: "idle" is a session
+// sitting at its prompt and "done" is one herdr has seen finish. "working" is
+// still going and "blocked" wants a human, so neither is ever cut off here.
+const REAPABLE: AgentStatus[] = ["idle", "done"]
+
+// A worker that finishes its round and never exits keeps counting against its
+// account in inFlightByAccount, for as long as its worktree waits on a
+// sweepOk somebody outside the loop owns, which for a reviewer is until the
+// pull request closes. The monitor cannot help: done() has already turned
+// true, so the item lost its claim and monitor stopped looking at it. On
+// 2026-09-07 two of them held the only account maplista may use, one for nine
+// hours and one for eight, and every tick in between read as a healthy
+// STARVED. Close the tab and leave the worktree, which is the half of a sweep
+// that is safe while sweepOk is still false.
+async function reapable(ctx: Ctx, p: Job, wt: Worktree, rawKey: string): Promise<string | null> {
+  const stale = ctx.config.staleAgentMin
+  if (!stale) return null
+  const agents = await ctx.cache("engine:agents", () => ctx.herdr.agents())
+  const agent = agents.find((a) => matchesCwd(a.cwd, wt.path) && REAPABLE.includes(a.status))
+  if (!agent) {
+    // It went away on its own, or went back to working. Either way the clock
+    // this run started should not carry into the next idle spell.
+    ctx.marks.clear(p.name, rawKey, "stale")
+    return null
+  }
+  const age = ctx.marks.age(p.name, rawKey, "stale")
+  if (age === null) {
+    ctx.marks.set(p.name, rawKey, "stale")
+    return null
+  }
+  if (age < stale) return null
+  ctx.marks.clear(p.name, rawKey, "stale")
+  return `agent ${agent.status} ${age}m >= ${stale}m, closing the tab`
+}
+
 export async function sweepJob(ctx: Ctx, p: Job): Promise<Decision[]> {
   const repo = ctx.workspace.repos[p.repo ?? ""]
   if (!repo) return []
@@ -37,7 +73,7 @@ export async function sweepJob(ctx: Ctx, p: Job): Promise<Decision[]> {
   for (const wt of worktrees) {
     if (!owns(p.name, base, wt)) continue
     const rawKey = keyOf(p.name, wt.branch)!
-    const mk = (action: "clean" | "hold" | "overdue", reason: string): Decision => ({
+    const mk = (action: "clean" | "hold" | "overdue" | "reap", reason: string): Decision => ({
       pass: "sweep", job: p.name, worktree: wt.path, branch: wt.branch!, action, reason,
     })
     // Both holds below are unbounded by design, and this pass is the only one
@@ -56,6 +92,19 @@ export async function sweepJob(ctx: Ctx, p: Job): Promise<Decision[]> {
     }
     const predicate = p.sweepOk ? "sweepOk" : "done"
     if (!(await isFinished(ctx, p, rawKey))) {
+      const reason = await reapable(ctx, p, wt, rawKey)
+      if (reason) {
+        out.push(mk("reap", reason))
+        if (ctx.live) {
+          try {
+            await applyReap(ctx, wt)
+          } catch (err) {
+            // The worktree still holds below either way: a tab that will not
+            // close is a slot left occupied, not a reason to skip the hold.
+            out.push({ pass: "error", job: p.name, where: "sweep", reason: String(err) })
+          }
+        }
+      }
       await held(`${predicate}(${rawKey}) false`, `waiting on ${predicate}(${rawKey})`)
       continue
     }
