@@ -12,6 +12,10 @@ export interface BudgetIn {
   usageMax: number
   releaseBefore: number
   maxConcurrent: number
+  // How long one worker runs, in minutes. Used to price a burst while the
+  // window is behind its line: a worker is only started when the points left
+  // can pay for a run of this length.
+  workerRunMin: number
   // Percentage points per minute per worker for this window.
   rateFor(w: Window): number
 }
@@ -63,16 +67,39 @@ export function concurrencyFor(i: BudgetIn): BudgetOut {
     const reserveNow =
       minutesToReset <= i.releaseBefore ? 0 : Math.min(100, Math.max(i.reserve, perWeekday))
     const ceiling = Math.min(i.usageMax, 100 - reserveNow)
-    const budgetRate = (ceiling - w.percent) / minutesToReset
     const rate = i.rateFor(w)
-    const workers = rate > 0 ? budgetRate / rate : 0
+    // What one run costs, which is the unit everything below is counted in: a
+    // worker is started or it is not, and half a run is not a thing to allow.
+    const runCost = rate * Math.max(1, i.workerRunMin)
+    // The budget spent evenly across the window, which is what the account has
+    // earned the right to spend by now. Being under it is credit, being over
+    // it is a debt the clock pays off.
+    const elapsed = Math.min(1, Math.max(0, 1 - minutesToReset / Math.max(1, w.windowMinutes)))
+    const line = ceiling * elapsed
+    const credit = line - w.percent
+    // Never start a run the remaining points cannot pay for: usageMax exists so
+    // a worker does not meet a 429 mid-task, and that holds however far behind
+    // the line the account is.
+    const affordable = runCost > 0 ? (ceiling - w.percent) / runCost : 0
+    // One worker at the line, more the further behind it the account is, none
+    // while it is ahead. The previous rule priced a worker as running without a
+    // break until the window resets, which no worker here does: a lane waits on
+    // continuous integration, on a review round, on a pull request closing. On
+    // a seven-day window that arithmetic asked for 171 points of headroom
+    // before it would allow a second worker against a ceiling of 75, so it
+    // could only ever allow one, and it dropped that one to zero at 19 percent
+    // spent. It also inverts near a reset, because the divisor shrinks: the
+    // maplista lane ran 102 and 100 spawns on the two days before its weekly
+    // reset and 22 on the day after, and each of those weeks still ended with
+    // 35 to 73 points expiring unspent.
+    const workers = w.percent > line ? 0 : Math.min(affordable, Math.max(1, credit / runCost))
     const concurrency = Math.max(0, Math.min(i.maxConcurrent, Math.round(workers)))
 
     if (!best || concurrency < best.concurrency) {
       best = {
         concurrency,
         limiting: w.kind,
-        detail: `${w.percent.toFixed(1)}% of ${ceiling.toFixed(1)} with ${Math.round(minutesToReset)}m left`,
+        detail: `${w.percent.toFixed(1)}% of ${ceiling.toFixed(1)}, line ${line.toFixed(1)}, with ${Math.round(minutesToReset)}m left`,
       }
     }
   }

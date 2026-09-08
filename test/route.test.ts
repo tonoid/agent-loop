@@ -22,6 +22,9 @@ const roomy = (): AccountUsage => ({
     windowMinutes: 300, observedAt: NOW,
   } satisfies Window],
 })
+// Room for exactly one worker: sitting on the window's line is credit zero,
+// which the pacer floors at one so a window that has just opened can start.
+const oneSlot = (): AccountUsage => tight(30)
 const tight = (percent: number): AccountUsage => ({
   readable: true,
   windows: [{
@@ -72,6 +75,7 @@ function build(o: {
     blockedTimeoutMin: 180,
     holdTimeoutMin: 180,
     staleAgentMin: 30,
+    workerRunMin: 20,
     workerRateSeed: 0.05,
     workspaces: [],
     ...o.config,
@@ -252,7 +256,7 @@ test("a reading from twenty-five minutes ago still prices the account", async ()
 // spending. The same 84% is eligible read live and refused read from
 // twenty-five minutes ago, which is the whole point of the adjustment.
 test("a stale reading is aged forward by what the account could have spent", async () => {
-  const live = build({ accounts: [acct("loop")], usage: { loop: tight(84) } })
+  const live = build({ accounts: [acct("loop")], usage: { loop: oneSlot() } })
   expect(await chooseAccount(live.ctx, job(), item())).toMatchObject({ ok: true })
 
   const { ctx, global } = build({
@@ -337,7 +341,7 @@ test("requires with no matching account starves before ranking", async () => {
 test("distinctFrom demotes the building account without excluding it", async () => {
   const both = {
     accounts: [acct("loop"), acct("main")],
-    usage: { loop: roomy(), main: tight(85) },
+    usage: { loop: roomy(), main: oneSlot() },
     body: "some text\nbuilt-by: loop\nmore text",
   }
   const { ctx } = build(both)
@@ -363,7 +367,7 @@ test("a missing built-by line is ignored and said so", async () => {
 test("in-flight workers are attributed through the spawns table and subtracted", async () => {
   const { ctx, global } = build({
     accounts: [acct("loop", { maxConcurrent: 1 }), acct("main")],
-    usage: { loop: roomy(), main: tight(85) },
+    usage: { loop: roomy(), main: oneSlot() },
     agents: [{ cwd: `${BASE}/wt-review-r80-2fa-login`, status: "working", paneId: "p1" }],
   })
   global.spawnAdd("loop", "acme", "review", "r80", new Date("2026-08-19T08:00:00Z"))
@@ -532,7 +536,7 @@ test("a worker under another workspace still counts against the account's concur
   const mine = wsCfg("acme", BASE, [job()])
   const { ctx, global } = build({
     accounts: [acct("loop", { maxConcurrent: 1 }), acct("main")],
-    usage: { loop: roomy(), main: tight(85) },
+    usage: { loop: roomy(), main: oneSlot() },
     workspace: mine,
     workspaces: [other, mine],
     agents: [{ cwd: "/b2/wt-build-b7", status: "working", paneId: "p1" }],
