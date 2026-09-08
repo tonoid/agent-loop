@@ -71,6 +71,9 @@ export interface Config {
   // An agent sitting in a held worktree with no work left is closed after this
   // many minutes, freeing the account slot it counts against. 0 turns it off.
   staleAgentMin: number
+  // How long one worker runs, in minutes. Prices a burst while a window is
+  // behind its line: a worker only starts if the points left can pay for it.
+  workerRunMin: number
   // Percentage points per minute per worker, used for a provider/window pair
   // with no measured EWMA yet. Must be > 0.
   workerRateSeed: number

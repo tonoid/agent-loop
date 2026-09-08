@@ -10,7 +10,7 @@ const w = (kind: string, percent: number, resetsInMin: number, windowMinutes = 3
 
 const input = (windows: Window[], o: Partial<Parameters<typeof concurrencyFor>[0]> = {}) => ({
   windows, now: NOW, reserve: 0, usageMax: 90, releaseBefore: 120, maxConcurrent: 4,
-  rateFor: () => 0.05, ...o,
+  workerRunMin: 20, rateFor: () => 0.05, ...o,
 })
 
 test("an account under pace gets workers proportional to its budget", () => {
@@ -20,9 +20,43 @@ test("an account under pace gets workers proportional to its budget", () => {
   expect(concurrencyFor(input([w("session", 10, 200)], { maxConcurrent: 6 })).concurrency).toBe(6)
 })
 
-test("an account over pace starves", () => {
-  // 20 points left over 1000 minutes = 0.02 points/min, under one worker.
-  expect(concurrencyFor(input([w("session", 70, 1000, 10080)])).concurrency).toBe(0)
+test("an account ahead of its line waits for the clock, not for the reset", () => {
+  // A tenth of a 10080-minute window has gone, so the line is at 9 points and
+  // 70 are spent. Nothing runs until the line catches up.
+  expect(concurrencyFor(input([w("session", 70, 9080, 10080)])).concurrency).toBe(0)
+})
+
+// Nine tenths of the window gone and 70 of 90 points spent, so the account is
+// 11 points behind its own line and the points left pay for the runs.
+test("an account behind its line spends what the window has already earned", () => {
+  const out = concurrencyFor(input([w("session", 70, 1000, 10080)]))
+  expect(out.concurrency).toBe(4)
+  expect(out.detail).toBe("70.0% of 90.0, line 81.1, with 1000m left")
+})
+
+// At the line itself, one worker: the alternative is a window that opens with
+// nothing spent, a line at zero, and a lane that can never start.
+test("an account on its line still gets one worker", () => {
+  expect(concurrencyFor(input([w("session", 0, 10080, 10080)])).concurrency).toBe(1)
+  expect(concurrencyFor(input([w("session", 30, 200)])).concurrency).toBe(1)
+})
+
+// The maplista weekly window on 2026-09-08. The old rule read one worker here
+// and zero two points later; both of those are now decided by the line.
+test("a seven-day window is paced by its line rather than by the reset", () => {
+  const weekly = (pct: number) => input([w("weekly_all", pct, 8123, 10080)], { usageMax: 75, rateFor: () => 0.0141 })
+  // 19.4 percent of the window gone, so the line is at 14.6 points.
+  expect(concurrencyFor(weekly(17)).concurrency).toBe(0)
+  expect(concurrencyFor(weekly(14)).concurrency).toBe(2)
+  expect(concurrencyFor(weekly(5)).concurrency).toBe(4)
+})
+
+// A worker is never started into a ceiling it cannot finish inside, however
+// far behind the line the account is.
+test("being behind the line never buys a run the points cannot pay for", () => {
+  // 0.5 points left of the 90 ceiling, and a 20-minute run at 0.05 a minute
+  // costs 1, so the run is unaffordable even 80 points behind the line.
+  expect(concurrencyFor(input([w("session", 89.5, 1000, 10080)])).concurrency).toBe(0)
 })
 
 test("an account past its ceiling gets zero, never a negative", () => {
@@ -43,10 +77,11 @@ test("the reserve lowers the ceiling until releaseBefore drops it", () => {
   const far = input([w("session", 58, 200)], { reserve: 40 })
   // ceiling min(90, 100-40) = 60, so 2 points over 200 minutes: no workers.
   expect(concurrencyFor(far).concurrency).toBe(0)
-  // The same account inside releaseBefore: the reserve is released, the ceiling
-  // is usageMax again, and 32 points over 100 minutes fills every slot.
+  // The same account inside releaseBefore: the reserve is released and the
+  // ceiling is usageMax again, which moves the line from 20 points to 60 and
+  // puts the account 2 behind it rather than 38 ahead.
   const near = input([w("session", 58, 100)], { reserve: 40 })
-  expect(concurrencyFor(near).concurrency).toBe(4)
+  expect(concurrencyFor(near).concurrency).toBe(2)
 })
 
 test("usageMax is never released, even at the edge of the reset", () => {
@@ -91,7 +126,7 @@ test("the per-weekday reserve widens the flat one and never shrinks it", () => {
   const at = (o: Partial<BudgetIn> = {}) => concurrencyFor({
     windows: [w("weekly_all", 10, new Date(2026, 7, 25, 8, 0), 10080)],  // next Tuesday
     now, reserve: 0, usageMax: 90, releaseBefore: 120, maxConcurrent: 4,
-    rateFor: () => 0.0104, ...o,
+    workerRunMin: 20, rateFor: () => 0.0104, ...o,
   })
 
   // Three weekday equivalents at 20 each, plus a quarter-weighted weekend.

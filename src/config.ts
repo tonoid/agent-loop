@@ -13,7 +13,7 @@ const KNOWN_PROVIDERS: Provider[] = ["claude", "codex", "grok"]
 const CONFIG_KEYS = [
   "accounts", "workspaces", "maxConcurrentPerAccount", "minFreeMb", "usageMax",
   "releaseBefore", "maxSpawnsPerDay", "blockedTimeoutMin", "holdTimeoutMin", "staleAgentMin",
-  "workerRateSeed",
+  "workerRunMin", "workerRateSeed",
 ]
 const ACCOUNT_KEYS = [
   "id", "provider", "configDir", "reserve", "reservePerWeekday", "weekendWeight", "soleConsumer", "maxConcurrent", "allowWhenUnreadable",
@@ -38,6 +38,11 @@ export const DEFAULTS = {
   // that a worker still writing its last comment is never cut off, and short
   // enough that a lane does not spend a night starved behind it.
   staleAgentMin: 30,
+  // Measured on simo over 2026-08-31..09-05: 154 paired spawn and done lines
+  // averaging 16.3 minutes. Rounded up, because the cost of overestimating is
+  // one worker fewer and the cost of underestimating is a run that meets its
+  // ceiling mid-task.
+  workerRunMin: 20,
   workerRateSeed: 0.35,
 } as const
 
@@ -204,6 +209,7 @@ export function parseConfig(text: string): { config: Config; errors: string[] } 
       blockedTimeoutMin: num(raw.blockedTimeoutMin, "blockedTimeoutMin", DEFAULTS.blockedTimeoutMin, errs),
       holdTimeoutMin: num(raw.holdTimeoutMin, "holdTimeoutMin", DEFAULTS.holdTimeoutMin, errs),
       staleAgentMin: num(raw.staleAgentMin, "staleAgentMin", DEFAULTS.staleAgentMin, errs),
+      workerRunMin: num(raw.workerRunMin, "workerRunMin", DEFAULTS.workerRunMin, errs),
       workerRateSeed,
     },
     errors: errs,

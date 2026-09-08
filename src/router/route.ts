@@ -214,6 +214,7 @@ export async function chooseAccount(ctx: Ctx, p: Job, item: WorkItem): Promise<R
         usageMax: cfg.usageMax,
         releaseBefore: cfg.releaseBefore,
         maxConcurrent: max,
+        workerRunMin: cfg.workerRunMin,
         rateFor: (w) => rateOf(ctx.global, a.provider, w.kind, cfg.workerRateSeed, w.windowMinutes),
       })
       concurrency = b.concurrency
