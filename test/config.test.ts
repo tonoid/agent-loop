@@ -65,7 +65,7 @@ accounts:
   - { id: loop, provider: clawd, configDir: ~/.a }
 workspaces: [~/x]
 `)
-  expect(errors).toContain('account "loop": unknown provider "clawd"; known: claude, codex, grok')
+  expect(errors).toContain('account "loop": unknown provider "clawd"; known: claude, codex, grok, cpa')
 })
 
 test("a reserve outside 0..100 is rejected", () => {

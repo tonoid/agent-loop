@@ -111,6 +111,8 @@ export const CONFIG_ENV_BY_PROVIDER: Record<string, string> = {
   claude: "CLAUDE_CONFIG_DIR",
   codex: "CODEX_HOME",
   grok: "GROK_HOME", // unverified: set configEnv on the account before routing real work
+  // Still Claude Code, still its own state directory; only the base URL moves.
+  cpa: "CLAUDE_CONFIG_DIR",
 }
 
 export const PANE_RETRIES = 5

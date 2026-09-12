@@ -3,7 +3,7 @@ import { expandHome } from "./paths"
 import { unknownKey } from "./kinds"
 import { isAbsolute } from "node:path"
 
-const KNOWN_PROVIDERS: Provider[] = ["claude", "codex", "grok"]
+const KNOWN_PROVIDERS: Provider[] = ["claude", "codex", "grok", "cpa"]
 
 // An unknown key is a typo, and a typo here is silent: `reserved: 40` leaves
 // the reserve at 0, so the one mechanism keeping the loop out of a human's
