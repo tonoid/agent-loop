@@ -66,4 +66,9 @@ test.skipIf(!LIVE)("a brief actually lands in a real agent's composer", async ()
       console.warn(`cleanup failed for label "${label}" in workspace "${WORKSPACE}"; close it by hand`)
     }
   }
-}, 120_000)
+// Six minutes because startWorker retries: herdr waits 30s for interactive
+// readiness before it answers agent_not_ready, START_RETRIES is 5, and each
+// round adds a dialog answer and a delay, with sendBrief's five attempts after
+// that. A budget that expires mid-start reports "timeout" instead of the herdr
+// error that caused it, and skips the cleanup that closes the tab.
+}, 360_000)
