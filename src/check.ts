@@ -39,6 +39,36 @@ async function trusts(deps: CheckDeps, account: AccountConfig, base: string): Pr
   }
 }
 
+// Two accounts on one Anthropic account is not two pools. The router prices
+// every account from its own configDir, so a duplicate reads the same live
+// usage twice, hands out two independent budgets, and the box runs both at
+// once against one window: on 2026-09-12 simo and 2sync were the same uuid
+// with reserves of 10 and 60 held over the same quota, and a `requires` list
+// naming one of them fenced nothing, because work admitted to the other spent
+// the same account. Silent when the file cannot be read or carries no uuid:
+// that file belongs to another tool, and guessing is how the trust check above
+// decided to warn rather than fail. A definite match is a definite
+// misconfiguration, so it fails.
+async function duplicateAccounts(deps: CheckDeps, accounts: AccountConfig[]): Promise<string[]> {
+  const byUuid = new Map<string, string[]>()
+  for (const account of accounts) {
+    if (account.provider !== "claude") continue
+    const text = await deps.readConfig(`${account.configDir}/.claude.json`)
+    if (text === null) continue
+    let uuid: unknown
+    try {
+      uuid = JSON.parse(text).oauthAccount?.accountUuid
+    } catch {
+      continue
+    }
+    if (typeof uuid !== "string" || !uuid) continue
+    byUuid.set(uuid, [...(byUuid.get(uuid) ?? []), account.id])
+  }
+  return [...byUuid.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([uuid, ids]) => `accounts ${ids.join(" and ")} are the same Anthropic account (${uuid}); their budgets and reserves both price one window`)
+}
+
 export async function runCheck(o: {
   configPath: string
   workspaceDir?: string
@@ -96,6 +126,7 @@ export async function runCheck(o: {
   if (labels === null) lines.push("WARN could not ask herdr for its workspaces")
 
   lines.push(`${config.accounts.length} account${config.accounts.length === 1 ? "" : "s"}: ${config.accounts.map((a) => a.id).join(", ")}`)
+  for (const dup of await duplicateAccounts(o.deps, config.accounts)) fail(dup)
   const { workspaces, errors } = discover(config, {
     kinds: o.kinds,
     accounts: config.accounts,
