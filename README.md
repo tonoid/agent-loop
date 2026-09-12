@@ -13,7 +13,7 @@ anywhere to run. If you are looking for something that shells out to an agent
 binary and waits on an exit code, this is not it, and [the section
 below](#how-it-uses-herdr) is the fastest way to find that out.
 
-Built against **herdr 0.8.0, protocol 19**.
+Built against **herdr 0.9.0, protocol 22**.
 
 [![npm](https://img.shields.io/npm/v/@tonoid/agent-loop?logo=npm)](https://www.npmjs.com/package/@tonoid/agent-loop)
 [![License MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
