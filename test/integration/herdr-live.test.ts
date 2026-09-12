@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { makeHerdr } from "../../src/adapters/herdr"
 import { makeRunners } from "../../src/adapters/run"
-import { sendBrief } from "../../src/runtime/worker"
+import { startWorker } from "../../src/runtime/worker"
 import type { Ctx } from "../../src/types"
 
 const LIVE = process.env.AGENT_LOOP_LIVE_HERDR === "1"
@@ -35,8 +35,17 @@ test.skipIf(!LIVE)("a brief actually lands in a real agent's composer", async ()
     }
     expect(pane, "no pane appeared for the new tab").toBeTruthy()
 
-    await herdr.agentStart({ pane: pane!, kind: KIND, name: label, args: [] })
-    await sendBrief(ctx, pane!, "Reply with the single word ACK and then stop.")
+    // Through startWorker rather than agentStart plus sendBrief: every
+    // worktree is a directory the agent has never seen, so a real start comes
+    // up on the folder-trust dialog and herdr answers agent_not_ready. Answering
+    // that is startWorker's job, and going around it tests a path no spawn takes.
+    await startWorker(ctx, {
+      pane: pane!,
+      kind: KIND,
+      name: label,
+      args: [],
+      brief: "Reply with the single word ACK and then stop.",
+    })
 
     expect(await herdr.agentStatus(pane!)).toBe("working")
   } finally {

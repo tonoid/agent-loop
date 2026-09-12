@@ -38,16 +38,16 @@ export type HerdrRead = Herdr
 // The herdr protocol this project was built and tested against. Section 9 of
 // the spec: check it, warn loudly on a mismatch, never refuse to run.
 //
-// Moved to 20 for herdr 0.8.2, after checking the schema it bundles against
+// Moved to 22 for herdr 0.9.0, after checking the schema it bundles against
 // every call this adapter makes rather than against the version number alone.
 // AgentStatus still enumerates idle, working, blocked, done and unknown, which
 // is what toStatus below maps; AgentInfo and PaneInfo still require pane_id,
 // tab_id and agent_status, and still carry cwd; WorkspaceInfo still carries
 // workspace_id and label; and tab create, agent start, agent prompt, agent
 // read and notification show all still take the flags and enum values used
-// here. Every one of those verbs also ran against a live 0.8.2 through a day
-// of spawns and sweeps before this moved.
-export const TESTED_PROTOCOL = 20
+// here. agent list, pane list and workspace list were also read back off a
+// live 0.9.0 and still answer in the envelope the readers here expect.
+export const TESTED_PROTOCOL = 22
 
 // Everything herdr's AgentStatus enum holds except "unknown", which is herdr
 // reporting that it has no status for this agent yet: a starting worker reads
