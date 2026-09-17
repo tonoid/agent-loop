@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/tonoid/agent-loop/compare/v1.1.0...v1.2.0) (2026-09-17)
+
+
+### Features
+
+* route Anthropic work through a gateway, and catch two accounts that are one ([#20](https://github.com/tonoid/agent-loop/issues/20)) ([8b69b9d](https://github.com/tonoid/agent-loop/commit/8b69b9ddd5a46fe4d72b47e2f647ea5e8f1e83bd))
+
+
+### Bug Fixes
+
+* retry a failed routine occurrence, and put the real error in the FAIL line ([#22](https://github.com/tonoid/agent-loop/issues/22)) ([12a5b7c](https://github.com/tonoid/agent-loop/commit/12a5b7c40a565a1e3fbb6b0ad130f214b87c83b7))
+
 ## [1.1.0](https://github.com/tonoid/agent-loop/compare/v1.0.0...v1.1.0) (2026-09-12)
 
 
