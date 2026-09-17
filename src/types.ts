@@ -1,4 +1,4 @@
-export type Provider = "claude" | "codex" | "grok"
+export type Provider = "claude" | "codex" | "grok" | "cpa"
 
 export interface AccountConfig {
   id: string

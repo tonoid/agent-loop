@@ -231,3 +231,40 @@ test("a herdr that cannot be asked is a warning, not a verdict on the label", as
   expect(ok).toBe(true)
   expect(lines).toContain("WARN could not ask herdr for its workspaces")
 })
+
+// The failure this catches is silent: two entries on one Anthropic account get
+// two budgets and two reserves over one window, and the box runs both at once.
+function twoAccounts(dir: string, uuids: Record<string, string>): CheckDeps {
+  return deps({
+    readConfig: async (path: string) => {
+      if (path === "/x/config.yml") {
+        return `accounts:\n  - { id: a, provider: claude, configDir: ~/.a }\n  - { id: b, provider: claude, configDir: ~/.b }\nworkspaces:\n  - ${dir}\n`
+      }
+      for (const [suffix, uuid] of Object.entries(uuids)) {
+        if (path.endsWith(`${suffix}/.claude.json`)) return JSON.stringify({ oauthAccount: { accountUuid: uuid } })
+      }
+      return null
+    },
+  })
+}
+
+test("two accounts on one Anthropic account fail the check", async () => {
+  const dir = tree()
+  const { lines, ok } = await runCheck({
+    configPath: "/x/config.yml",
+    kinds: { builder },
+    deps: twoAccounts(dir, { "/.a": "same-uuid", "/.b": "same-uuid" }),
+  })
+  expect(ok).toBe(false)
+  expect(lines.some((l) => l.includes("accounts a and b are the same Anthropic account (same-uuid)"))).toBe(true)
+})
+
+test("two accounts on different Anthropic accounts pass", async () => {
+  const dir = tree()
+  const { lines, ok } = await runCheck({
+    configPath: "/x/config.yml",
+    kinds: { builder },
+    deps: twoAccounts(dir, { "/.a": "uuid-a", "/.b": "uuid-b" }),
+  })
+  expect(ok).toBe(true)
+})

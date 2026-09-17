@@ -20,6 +20,7 @@ import { openGlobalState } from "./globalstate"
 import { makeClaudeReader, liveClaudeDeps } from "./router/providers/claude"
 import { makeCodexReader, liveCodexDeps } from "./router/providers/codex"
 import { grokReader } from "./router/providers/grok"
+import { cpaReader } from "./router/providers/cpa"
 import type { Provider, UsageReader, WorkspaceConfig } from "./types"
 import { dirname } from "node:path"
 import { renderStatus } from "./status"
@@ -166,6 +167,7 @@ const readers: Record<Provider, UsageReader> = {
   claude: makeClaudeReader(liveClaudeDeps(cmd === "tick" && live)),
   codex: makeCodexReader(liveCodexDeps()),
   grok: grokReader,
+  cpa: cpaReader,
 }
 
 const { runText: rt, runJson: rj } = makeRunners(live)
