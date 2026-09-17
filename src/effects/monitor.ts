@@ -57,6 +57,14 @@ export async function applyEscalate(ctx: Ctx, p: Job, item: WorkItem, key: strin
       // verdict goes to the job's own onFail, which is what writes the journal.
       if (p.onFail) {
         await p.onFail(ctx, item, "the worker was blocked past the escalation timeout and there is nothing to park")
+        // The same order applyFail uses, and for the same reason. A trackerless
+        // item's worktree is its claim, so leaving it behind here left the
+        // occurrence claimed and discoverable at once: discoverClaimed read the
+        // worktree as a run in flight while discover offered the key again. On a
+        // job with one slot that burned the whole retry budget on escalations
+        // that never re-spawned anything; with two it pre-cleaned the worktree
+        // out from under the agent that was still sitting there blocked.
+        await preClean(ctx, p, key)
         return
       }
       // With no onFail either there is nowhere at all to put a verdict. This

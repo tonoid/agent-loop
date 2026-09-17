@@ -5,7 +5,7 @@ import type { Kind } from "./validate"
 import { renderBrief } from "../brief"
 import { owns, keyOf } from "../engine/naming"
 import { expandHome } from "../paths"
-import { appendJournal } from "../journal"
+import { appendJournal, failSummary, writeFailTail } from "../journal"
 
 interface Options {
   at: string[]
@@ -63,6 +63,63 @@ function donePath(spec: { dir: string }, pattern: string, key: string): string {
   return isAbsolute(filled) ? filled : resolve(spec.dir, filled)
 }
 
+// A failed occurrence used to be over for good: applyFail leaves the spawned
+// mark in place and discover() reads that mark as "this occurrence has run", so
+// the digest that died at 00:15 simply never happened and the 06:10 run carried
+// its own window's deals rather than the missed ones. Clearing the mark makes
+// the occurrence discoverable again; these two numbers are what keeps that
+// bounded.
+//
+// The gap grows because the failure is usually not about this run. On
+// 2026-09-12 two runs failed within minutes of each other, both routed to an
+// account sitting at 100% of its worst usage window, and a retry on the very
+// next tick would have hit the same wall two minutes later. Ten minutes rides
+// out a transient hiccup, thirty gives a quota window time to move. The length
+// of this list is the cap: two retries, so three spawns for one occurrence at
+// the very most.
+const RETRY_BACKOFF_MIN = [10, 30]
+
+// Marks are a (job, key, mark) primary key with no value column, so the attempt
+// count is the mark's own name. It also gives each attempt its own timestamp,
+// which a single re-set mark could not: set is INSERT OR IGNORE, so a mark
+// keeps the time it was first written.
+const failMark = (n: number) => `fail-${n}`
+
+function failedAttempts(ctx: Ctx, job: string, key: string): number {
+  let n = 0
+  while (n <= RETRY_BACKOFF_MIN.length && ctx.marks.has(job, key, failMark(n + 1))) n++
+  return n
+}
+
+// The supervision marks are per attempt, not per occurrence. Leaving "nudged"
+// behind would have the monitor fail the retry on its first idle tick instead
+// of nudging it first, and a stale "blocked" mark would escalate it the moment
+// it asked anything.
+const PER_ATTEMPT_MARKS = ["spawned", "nudged", "restarted", "blocked"]
+
+// Returns the phrase the journal line reports, since what happened to the retry
+// budget is most of what an operator wants from a FAIL line.
+function armRetry(ctx: Ctx, job: string, key: string, current: string | null): string {
+  const attempt = failedAttempts(ctx, job, key) + 1
+  const total = RETRY_BACKOFF_MIN.length + 1
+  // Past the cap there is no attempt left to record. Writing fail-4 and beyond
+  // stamps marks nothing reads and reports "attempt 4 of 3", which happens
+  // whenever one occurrence fails more than three times: a preClean that cannot
+  // remove a dirty worktree has the monitor re-fail it every tick.
+  if (attempt > total) return `already gave up after ${total} attempts`
+  ctx.marks.set(job, key, failMark(attempt))
+
+  // Never re-run an occurrence whose window has rolled. The run exists to
+  // produce that window's output and cannot produce it late, so a job that is
+  // broken rather than unlucky stops here instead of spinning through every
+  // occurrence it touches with attempts still on the clock.
+  if (key !== current) return `attempt ${attempt} of ${total}, occurrence no longer current so it stays failed`
+  const wait = RETRY_BACKOFF_MIN[attempt - 1]
+  if (wait === undefined) return `attempt ${attempt} of ${total}, no retries left`
+  for (const mark of PER_ATTEMPT_MARKS) ctx.marks.clear(job, key, mark)
+  return `attempt ${attempt} of ${total}, retrying in ${wait}m`
+}
+
 const itemFor = (key: string, name: string): WorkItem => ({
   // No url, so nothing labels it and nothing comments on it: the loop's own
   // mark and the worktree on disk are the whole record of this run.
@@ -114,7 +171,20 @@ export const routine: Kind = {
       async discover(ctx) {
         const key = occurrenceKey(ctx.now, o.at)
         if (!key || !onDay(key, o.days)) return []
-        return ctx.marks.has(job.name, key, "spawned") ? [] : [itemFor(key, job.name)]
+        if (ctx.marks.has(job.name, key, "spawned")) return []
+
+        // A retry waits out its backoff, measured from the failure that armed
+        // it. Without that a loop ticking every two minutes would spend all
+        // three attempts inside six, which is no wait at all for the account
+        // quota that usually caused the failure.
+        const attempts = failedAttempts(ctx, job.name, key)
+        if (attempts) {
+          const wait = RETRY_BACKOFF_MIN[attempts - 1]
+          if (wait === undefined) return []
+          const age = ctx.marks.age(job.name, key, failMark(attempts))
+          if (age === null || age < wait) return []
+        }
+        return [itemFor(key, job.name)]
       },
 
       // Derived from the world after all: a worktree this job owns is a run in
@@ -157,9 +227,18 @@ export const routine: Kind = {
       },
 
       // The default failure path labels and comments, and there is nothing here
-      // to label. The journal is the whole post-mortem, so it gets the tail.
+      // to label. The journal and the file beside it are the whole post-mortem.
+      //
+      // The tail used to be sliced from the end, and the end of a Claude Code
+      // pane is always its input box: borders, the shortcuts hint, a spinner.
+      // So every FAIL line the loop has written recorded terminal furniture and
+      // the failure itself was gone. The full 60 lines go to disk and the
+      // journal gets the error-shaped line out of the middle of them.
       async onFail(ctx, item, transcriptTail) {
-        appendJournal(ctx, `FAIL ${job.name} ${keyOfItem(item)}: ${transcriptTail.split("\n").slice(-5).join(" ").trim()}`)
+        const key = keyOfItem(item)
+        const path = writeFailTail(ctx, job.name, key, transcriptTail)
+        const retry = armRetry(ctx, job.name, key, occurrenceKey(ctx.now, o.at))
+        appendJournal(ctx, `FAIL ${job.name} ${key}: ${failSummary(transcriptTail)}; ${retry}; full tail ${path}`)
       },
 
       brief: (ctx, item) =>
