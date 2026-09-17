@@ -8,6 +8,7 @@ import { makeCtx } from "../src/ctx"
 import { openState } from "../src/state"
 import { openGlobalState } from "../src/globalstate"
 import { memoryLock } from "../src/lock"
+import { failSummary } from "../src/journal"
 import { claim, unclaim } from "../src/effects/spawn"
 import type { Ctx, WorkItem } from "../src/types"
 
@@ -356,6 +357,40 @@ test("the whole tail lands in a file beside the journal, one entry per failure",
     const both = bed.tailFile("20260819-0910")
     expect(both).toContain(TUI_TAIL)
     expect(both).toContain(TIDY_TAIL)
+  } finally {
+    rmSync(bed.dir, { recursive: true, force: true })
+  }
+})
+
+// "> " is how more than one tool prefixes its own output, so treating every line
+// starting with it as the input box threw away real failures and then said no
+// error-shaped line was found, which reads as a diagnosis and stops the operator
+// opening the file that has the rest.
+test("an error a tool prefixed with > is not mistaken for the prompt row", () => {
+  const line = failSummary("running deploy\n> FATAL: could not reach 10.0.0.4:5432\ndone")
+  expect(line).toContain("FATAL: could not reach 10.0.0.4:5432")
+  expect(line).not.toContain("no error-shaped line found")
+})
+
+test("an empty prompt row is still chrome", () => {
+  const line = failSummary("Error: boom\n> \n>")
+  expect(line).toContain("Error: boom")
+})
+
+// One occurrence can fail well past its cap: a preClean that cannot remove a
+// dirty worktree leaves the monitor re-failing it every tick. The counter must
+// stop rather than stamp marks nothing reads and report "attempt 4 of 3".
+test("failing past the cap stops counting instead of reporting attempt 4 of 3", async () => {
+  const bed = failbed()
+  const p = job()
+  const key = "20260819-0910"
+  const ctx = () => ctxFor({ now: at(9, 30), marks: bed.marks, journalPath: bed.journalPath })
+  try {
+    for (let i = 0; i < 6; i++) await p.onFail!(ctx(), occurrence(key), TUI_TAIL)
+    expect(bed.marks.has("digest", key, "fail-4")).toBe(false)
+    const last = bed.line().split("\n").filter(Boolean).pop()!
+    expect(last).not.toContain("attempt 4")
+    expect(last).toContain("already gave up after 3 attempts")
   } finally {
     rmSync(bed.dir, { recursive: true, force: true })
   }

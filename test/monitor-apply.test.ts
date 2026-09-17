@@ -68,14 +68,28 @@ test("with no escalate hook the loop parks the item itself and frees the slot", 
 // time this runs, so a silent return reads as an action that never happened and
 // the item cycles: blocked, wait the timeout, escalate nothing, blocked.
 test("a trackerless item escalates to the job's onFail, which is where its verdict lives", async () => {
-  const { ctx, calls } = ctxWith()
+  // liveCtx, not ctxWith: this path now pre-cleans like applyFail does, so it
+  // needs a ctx that can actually reach git and herdr.
+  const { ctx, calls } = liveCtx()
   const occurrence: WorkItem = { id: "key:20260819-0910", number: 0, title: "nightly", state: "OPEN", labels: [] }
   const failed: string[] = []
   const p = job({ onFail: async (_c, _i, tail) => { failed.push(tail) } })
   await applyEscalate(ctx, p, occurrence, "20260819-0910")
-  expect(calls).toEqual([])
+  expect(calls.map((c) => c[0])).not.toContain("label")
   expect(failed.length).toBe(1)
   expect(failed[0]!).toContain("blocked past the escalation timeout")
+})
+
+// The worktree is a trackerless item's only claim, so an escalation that left
+// it behind reported the occurrence as both in flight and available: with one
+// slot that burned the retry budget on escalations that re-spawned nothing, and
+// with two it pre-cleaned the worktree out from under the blocked agent.
+test("escalating a trackerless item takes its worktree, which is its claim", async () => {
+  const { ctx, calls } = liveCtx()
+  const occurrence: WorkItem = { id: "key:r80", number: 0, title: "nightly", state: "OPEN", labels: [] }
+  const p = job({ onFail: async () => {} })
+  await applyEscalate(ctx, p, occurrence, "r80")
+  expect(calls).toContainEqual(["worktreeRemove", "/b/wt-review-r80"])
 })
 
 test("a trackerless item with no onFail is a no-op, and labels nothing", async () => {

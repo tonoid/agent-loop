@@ -102,6 +102,11 @@ const PER_ATTEMPT_MARKS = ["spawned", "nudged", "restarted", "blocked"]
 function armRetry(ctx: Ctx, job: string, key: string, current: string | null): string {
   const attempt = failedAttempts(ctx, job, key) + 1
   const total = RETRY_BACKOFF_MIN.length + 1
+  // Past the cap there is no attempt left to record. Writing fail-4 and beyond
+  // stamps marks nothing reads and reports "attempt 4 of 3", which happens
+  // whenever one occurrence fails more than three times: a preClean that cannot
+  // remove a dirty worktree has the monitor re-fail it every tick.
+  if (attempt > total) return `already gave up after ${total} attempts`
   ctx.marks.set(job, key, failMark(attempt))
 
   // Never re-run an occurrence whose window has rolled. The run exists to

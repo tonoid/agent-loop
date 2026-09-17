@@ -44,7 +44,7 @@ const CHROME = [
   /^[^\w]*$/,                                  // a border or a bare spinner, nothing left after cleaning
   /\? for shortcuts/i,
   /esc to interrupt/i,
-  /^>/,                                        // the prompt line, empty or holding a draft
+  /^>\s*$/,                                   // the empty prompt row; "> FATAL: ..." is output, not chrome
   /\b\d+s\b.*\btokens\b/i,                     // the spinner's elapsed time and token counter
   /\b(accept edits|plan mode|bypass permissions)\b.*\bon\b/i,
 ]
